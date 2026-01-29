@@ -17,6 +17,7 @@ venv/
 # IDE / Tools
 .vscode/
 .idea/
+.agents/
 .claude/
 .github/
 .cursor/
