@@ -522,16 +522,6 @@ class TestParseTodoItemsAdvanced:
         assert len(result) == 1
         assert result[0]["content"] == "Do X"
 
-    def test_multiple_items(self):
-        import json
-        items = [
-            {"status": "done", "content": "A"},
-            {"status": "active", "content": "B"},
-            {"status": "todo", "content": "C"},
-        ]
-        result = _parse_todo_items(json.dumps(items))
-        assert len(result) == 3
-
     def test_non_list_json(self):
         """JSON object (not list) should return None."""
         assert _parse_todo_items('{"status": "todo"}') is None

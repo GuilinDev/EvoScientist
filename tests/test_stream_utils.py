@@ -98,10 +98,9 @@ class TestFormatToolCompact:
     def test_write_file_memory(self):
         result = format_tool_compact("write_file", {"path": "/MEMORY.md"})
         assert result == "Updating memory"
-
-    def test_write_file_memory_with_prefix(self):
-        result = format_tool_compact("write_file", {"path": "/memory/MEMORY.md"})
-        assert result == "Updating memory"
+        # Also covers paths with /memory/ prefix
+        result2 = format_tool_compact("write_file", {"path": "/memory/MEMORY.md"})
+        assert result2 == "Updating memory"
 
     def test_edit_file_memory(self):
         result = format_tool_compact("edit_file", {"path": "/memory/MEMORY.md"})

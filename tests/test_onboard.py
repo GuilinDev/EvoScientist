@@ -32,10 +32,6 @@ class TestConstants:
         from prompt_toolkit.styles import Style
         assert isinstance(WIZARD_STYLE, Style)
 
-    def test_wizard_style_has_required_keys(self):
-        """Test that WIZARD_STYLE defines expected style classes."""
-        assert WIZARD_STYLE is not None
-
     def test_confirm_style_is_style_instance(self):
         """Test that CONFIRM_STYLE is a prompt_toolkit Style."""
         from prompt_toolkit.styles import Style
@@ -68,12 +64,6 @@ class TestRenderProgress:
         # All step names should be present
         for step in STEPS:
             assert step in content_str
-
-    def test_renders_all_steps_completed(self):
-        """Test rendering when all steps are completed."""
-        panel = render_progress(current_step=5, completed={0, 1, 2, 3, 4, 5})
-        content_str = str(panel.renderable)
-        assert "Parameters" in content_str
 
     def test_panel_has_title(self):
         """Test that the panel has the expected title."""

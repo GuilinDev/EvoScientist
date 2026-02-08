@@ -655,7 +655,7 @@ def _detect_node_install_method() -> tuple[str, str]:
     Returns:
         Tuple of (method_name, install_command).
     """
-    # Check if inside a conda environment
+    # Conda environment (any platform)
     if os.environ.get("CONDA_PREFIX"):
         return "conda", "conda install -y nodejs"
 
