@@ -222,6 +222,93 @@ def _infer_transport(target: str) -> str:
     return "stdio"
 
 
+def build_mcp_add_kwargs(
+    name: str,
+    target: str,
+    extra_args: list[str] | None = None,
+    transport: str | None = None,
+    tools: list[str] | None = None,
+    expose_to: list[str] | None = None,
+    headers: dict[str, str] | None = None,
+    env: dict[str, str] | None = None,
+) -> dict:
+    """Build kwargs dict for :func:`add_mcp_server` from structured parameters.
+
+    If *transport* is ``None`` it is inferred from *target* (URL → ``http``,
+    otherwise ``stdio``).
+    """
+    if transport is None:
+        transport = _infer_transport(target)
+    kwargs: dict = {"name": name, "transport": transport}
+    if transport == "stdio":
+        kwargs["command"] = target
+        kwargs["args"] = list(extra_args) if extra_args else []
+        if env:
+            kwargs["env"] = env
+    else:
+        kwargs["url"] = target
+        if headers:
+            kwargs["headers"] = headers
+    if tools:
+        kwargs["tools"] = tools
+    if expose_to:
+        kwargs["expose_to"] = expose_to
+    return kwargs
+
+
+def build_mcp_edit_fields(
+    transport: str | None = None,
+    command: str | None = None,
+    url: str | None = None,
+    tools: str | None = None,
+    expose_to: str | None = None,
+    headers: list[str] | None = None,
+    env: list[str] | None = None,
+) -> dict:
+    """Build fields dict for :func:`edit_mcp_server` from structured parameters.
+
+    *tools* and *expose_to* accept the string ``"none"`` to clear the field,
+    or a comma-separated list.  *headers* and *env* are lists of
+    ``"Key:Value"`` / ``"KEY=VALUE"`` strings respectively.
+    """
+    fields: dict = {}
+    if transport is not None:
+        fields["transport"] = transport
+    if command is not None:
+        fields["command"] = command
+    if url is not None:
+        fields["url"] = url
+    if tools is not None:
+        fields["tools"] = (
+            None
+            if tools == "none"
+            else [t.strip() for t in tools.split(",") if t.strip()]
+        )
+    if expose_to is not None:
+        fields["expose_to"] = (
+            None
+            if expose_to == "none"
+            else [a.strip() for a in expose_to.split(",") if a.strip()]
+        )
+    if headers:
+        hdr: dict[str, str] = {}
+        for h in headers:
+            if ":" in h:
+                k, v = h.split(":", 1)
+                hdr[k.strip()] = v.strip()
+        if hdr:
+            fields["headers"] = hdr
+    if env:
+        env_dict: dict[str, str] = {}
+        for e in env:
+            if "=" in e:
+                k, v = e.split("=", 1)
+                env_dict[k.strip()] = v.strip()
+        if env_dict:
+            fields["env"] = env_dict
+    return fields
+
+
 def parse_mcp_add_args(tokens: list[str]) -> dict:
     """Parse CLI tokens for ``/mcp add`` into kwargs for :func:`add_mcp_server`.
 
@@ -284,27 +371,16 @@ def parse_mcp_add_args(tokens: list[str]) -> dict:
     if not positional:
         raise ValueError("A command or URL is required after the server name")
 
-    if transport is None:
-        transport = _infer_transport(positional[0])
-
-    kwargs: dict = {"name": name, "transport": transport}
-
-    if transport == "stdio":
-        kwargs["command"] = positional[0]
-        kwargs["args"] = positional[1:]
-        if env:
-            kwargs["env"] = env
-    else:
-        kwargs["url"] = positional[0]
-        if headers:
-            kwargs["headers"] = headers
-
-    if tools:
-        kwargs["tools"] = tools
-    if expose_to:
-        kwargs["expose_to"] = expose_to
-
-    return kwargs
+    return build_mcp_add_kwargs(
+        name=name,
+        target=positional[0],
+        extra_args=positional[1:] or None,
+        transport=transport,
+        tools=tools,
+        expose_to=expose_to,
+        headers=headers or None,
+        env=env or None,
+    )
 
 
 def parse_mcp_edit_args(tokens: list[str]) -> tuple[str, dict]:
@@ -325,60 +401,58 @@ def parse_mcp_edit_args(tokens: list[str]) -> tuple[str, dict]:
         )
 
     name = tokens[0]
-    fields: dict[str, Any] = {}
-    headers: dict[str, str] = {}
-    env: dict[str, str] = {}
+
+    # Parse tokens into raw values
+    transport_val: str | None = None
+    command_val: str | None = None
+    url_val: str | None = None
+    args_val: list[str] | None = None
+    tools_val: str | None = None
+    expose_to_val: str | None = None
+    header_list: list[str] = []
+    env_list: list[str] = []
 
     i = 1
     while i < len(tokens):
         tok = tokens[i]
         if tok == "--transport" and i + 1 < len(tokens):
-            fields["transport"] = tokens[i + 1]
+            transport_val = tokens[i + 1]
             i += 2
         elif tok == "--command" and i + 1 < len(tokens):
-            fields["command"] = tokens[i + 1]
+            command_val = tokens[i + 1]
             i += 2
         elif tok == "--url" and i + 1 < len(tokens):
-            fields["url"] = tokens[i + 1]
+            url_val = tokens[i + 1]
             i += 2
         elif tok == "--args" and i + 1 < len(tokens):
-            fields["args"] = tokens[i + 1].split(",")
+            args_val = tokens[i + 1].split(",")
             i += 2
         elif tok == "--tools" and i + 1 < len(tokens):
-            val = tokens[i + 1]
-            fields["tools"] = (
-                None
-                if val == "none"
-                else [t.strip() for t in val.split(",") if t.strip()]
-            )
+            tools_val = tokens[i + 1]
             i += 2
         elif tok == "--expose-to" and i + 1 < len(tokens):
-            val = tokens[i + 1]
-            fields["expose_to"] = (
-                None
-                if val == "none"
-                else [a.strip() for a in val.split(",") if a.strip()]
-            )
+            expose_to_val = tokens[i + 1]
             i += 2
         elif tok == "--header" and i + 1 < len(tokens):
-            kv = tokens[i + 1]
-            if ":" in kv:
-                k, v = kv.split(":", 1)
-                headers[k.strip()] = v.strip()
+            header_list.append(tokens[i + 1])
             i += 2
         elif tok == "--env" and i + 1 < len(tokens):
-            kv = tokens[i + 1]
-            if "=" in kv:
-                k, v = kv.split("=", 1)
-                env[k.strip()] = v.strip()
+            env_list.append(tokens[i + 1])
             i += 2
         else:
             i += 1
 
-    if headers:
-        fields["headers"] = headers
-    if env:
-        fields["env"] = env
+    fields = build_mcp_edit_fields(
+        transport=transport_val,
+        command=command_val,
+        url=url_val,
+        tools=tools_val,
+        expose_to=expose_to_val,
+        headers=header_list or None,
+        env=env_list or None,
+    )
+    if args_val is not None:
+        fields["args"] = args_val
 
     if not fields:
         raise ValueError(

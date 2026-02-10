@@ -13,6 +13,8 @@ from .client import (
     remove_mcp_server,
     parse_mcp_add_args,
     parse_mcp_edit_args,
+    build_mcp_add_kwargs,
+    build_mcp_edit_fields,
     VALID_TRANSPORTS,
 )
 
@@ -25,5 +27,7 @@ __all__ = [
     "remove_mcp_server",
     "parse_mcp_add_args",
     "parse_mcp_edit_args",
+    "build_mcp_add_kwargs",
+    "build_mcp_edit_fields",
     "VALID_TRANSPORTS",
 ]

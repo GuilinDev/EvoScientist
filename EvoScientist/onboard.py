@@ -309,6 +309,72 @@ def _step_provider(config: EvoScientistConfig) -> str:
     return provider
 
 
+def _provider_key_info(config: EvoScientistConfig, provider: str):
+    """Return (display_name, current_value, validate_fn) for a provider."""
+    mapping = {
+        "anthropic":   ("Anthropic", config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", ""), validate_anthropic_key),
+        "nvidia":      ("NVIDIA",    config.nvidia_api_key    or os.environ.get("NVIDIA_API_KEY", ""),    validate_nvidia_key),
+        "google-genai": ("Google",   config.google_api_key    or os.environ.get("GOOGLE_API_KEY", ""),    validate_google_key),
+    }
+    return mapping.get(provider, ("OpenAI", config.openai_api_key or os.environ.get("OPENAI_API_KEY", ""), validate_openai_key))
+
+
+def _prompt_and_validate_api_key(
+    prompt_text: str,
+    current: str,
+    validate_fn,
+    skip_validation: bool = False,
+    placeholder=None,
+) -> str | None:
+    """Prompt user for an API key, validate, offer save-anyway on failure.
+
+    Args:
+        prompt_text: The question shown to the user.
+        current: Currently stored key value (may be empty).
+        validate_fn: Callable(key) -> (bool, str).
+        skip_validation: If True, skip the validation step entirely.
+        placeholder: Optional placeholder for the password input.
+
+    Returns:
+        New key string if the user entered one, or None to keep existing.
+    """
+    kwargs: dict = {"style": WIZARD_STYLE, "qmark": QMARK}
+    if placeholder is not None:
+        kwargs["placeholder"] = placeholder
+
+    new_key = questionary.password(prompt_text, **kwargs).ask()
+    if new_key is None:
+        raise KeyboardInterrupt()
+
+    new_key = new_key.strip()
+    key_to_validate = new_key if new_key else current
+
+    if not key_to_validate:
+        return None
+
+    if not skip_validation:
+        console.print("  [dim]Validating...[/dim]", end="")
+        valid, msg = validate_fn(key_to_validate)
+        if valid:
+            console.print(f"\r  [green]\u2713 {msg}[/green]      ")
+            return new_key if new_key else None
+        else:
+            console.print(f"\r  [red]\u2717 {msg}[/red]      ")
+            if not new_key:
+                return None
+            save_anyway = questionary.confirm(
+                "Save anyway?",
+                default=False,
+                style=WIZARD_STYLE,
+                qmark=QMARK,
+            ).ask()
+            if save_anyway is None:
+                raise KeyboardInterrupt()
+            return new_key if save_anyway else None
+
+    return new_key if new_key else None
+
+
 def _step_provider_api_key(
     config: EvoScientistConfig,
     provider: str,
@@ -324,73 +390,14 @@ def _step_provider_api_key(
     Returns:
         New API key or None if unchanged.
     """
-    if provider == "anthropic":
-        key_name = "Anthropic"
-        current = config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        validate_fn = validate_anthropic_key
-    elif provider == "nvidia":
-        key_name = "NVIDIA"
-        current = config.nvidia_api_key or os.environ.get("NVIDIA_API_KEY", "")
-        validate_fn = validate_nvidia_key
-    elif provider == "google-genai":
-        key_name = "Google"
-        current = config.google_api_key or os.environ.get("GOOGLE_API_KEY", "")
-        validate_fn = validate_google_key
-    else:
-        key_name = "OpenAI"
-        current = config.openai_api_key or os.environ.get("OPENAI_API_KEY", "")
-        validate_fn = validate_openai_key
+    key_name, current, validate_fn = _provider_key_info(config, provider)
 
-    # Show current status inline
-    if current:
-        display_current = f"***{current[-4:]}"
-        hint = f"Current: {display_current}"
-    else:
-        hint = "Not set"
+    hint = f"Current: ***{current[-4:]}" if current else "Not set"
+    prompt_text = f"Enter {key_name} API key ({hint}, Enter to keep):"
 
-    # Prompt for new key
-    new_key = questionary.password(
-        f"Enter {key_name} API key ({hint}, Enter to keep):",
-        style=WIZARD_STYLE,
-        qmark=QMARK,
-    ).ask()
-
-    if new_key is None:
-        raise KeyboardInterrupt()
-
-    new_key = new_key.strip()
-
-    # Determine the key to validate: new input or existing current key
-    key_to_validate = new_key if new_key else current
-
-    if not key_to_validate:
-        return None  # Nothing to validate
-
-    # Validate the key (new or current)
-    if not skip_validation:
-        console.print("  [dim]Validating...[/dim]", end="")
-        valid, msg = validate_fn(key_to_validate)
-        if valid:
-            console.print(f"\r  [green]✓ {msg}[/green]      ")
-            return new_key if new_key else None  # Return new key or None (keep current)
-        else:
-            console.print(f"\r  [red]✗ {msg}[/red]      ")
-            if not new_key:
-                return None  # Current key invalid, but keep it
-            # Ask if they want to save anyway
-            save_anyway = questionary.confirm(
-                "Save anyway?",
-                default=False,
-                style=WIZARD_STYLE,
-                qmark=QMARK,
-            ).ask()
-            if save_anyway is None:
-                raise KeyboardInterrupt()
-            if save_anyway:
-                return new_key
-            return None
-    else:
-        return new_key if new_key else None
+    return _prompt_and_validate_api_key(
+        prompt_text, current, validate_fn, skip_validation,
+    )
 
 
 def _step_model(config: EvoScientistConfig, provider: str) -> str:
@@ -464,57 +471,13 @@ def _step_tavily_key(
     """
     current = config.tavily_api_key or os.environ.get("TAVILY_API_KEY", "")
 
-    # Show current status inline
-    if current:
-        display_current = f"***{current[-4:]}"
-        hint = f"Current: {display_current}"
-    else:
-        hint = "Not set"
+    hint = f"Current: ***{current[-4:]}" if current else "Not set"
+    prompt_text = f"Tavily API key for web search ({hint}, Enter to keep):"
 
-    # Prompt for new key
-    new_key = questionary.password(
-        f"Tavily API key for web search ({hint}, Enter to keep):",
-        style=WIZARD_STYLE,
-        qmark=QMARK,
+    return _prompt_and_validate_api_key(
+        prompt_text, current, validate_tavily_key, skip_validation,
         placeholder=FormattedText([("fg:#858585", "(recommended for web search)")]),
-    ).ask()
-
-    if new_key is None:
-        raise KeyboardInterrupt()
-
-    new_key = new_key.strip()
-
-    # Determine the key to validate: new input or existing current key
-    key_to_validate = new_key if new_key else current
-
-    if not key_to_validate:
-        return None  # Nothing to validate
-
-    # Validate the key (new or current)
-    if not skip_validation:
-        console.print("  [dim]Validating...[/dim]", end="")
-        valid, msg = validate_tavily_key(key_to_validate)
-        if valid:
-            console.print(f"\r  [green]✓ {msg}[/green]      ")
-            return new_key if new_key else None  # Return new key or None (keep current)
-        else:
-            console.print(f"\r  [red]✗ {msg}[/red]      ")
-            if not new_key:
-                return None  # Current key invalid, but keep it
-            # Ask if they want to save anyway
-            save_anyway = questionary.confirm(
-                "Save anyway?",
-                default=False,
-                style=WIZARD_STYLE,
-                qmark=QMARK,
-            ).ask()
-            if save_anyway is None:
-                raise KeyboardInterrupt()
-            if save_anyway:
-                return new_key
-            return None
-    else:
-        return new_key if new_key else None
+    )
 
 
 def _step_workspace(config: EvoScientistConfig) -> tuple[str, str]:
