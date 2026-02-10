@@ -183,7 +183,7 @@ def _cmd_channel(args: str, agent: Any, thread_id: str) -> None:
             allowed.add(parts[i + 1])
 
     config = IMessageConfig(
-        allowed_senders=allowed if allowed else None,
+        allowed_senders=list(allowed) if allowed else [],
     )
 
     # Store shared agent reference — no separate agent creation
@@ -264,7 +264,7 @@ def _auto_start_channel(agent: Any, thread_id: str, allowed_senders_csv: str) ->
         if allowed_senders_csv.strip():
             allowed = {s.strip() for s in allowed_senders_csv.split(",") if s.strip()}
 
-        config = IMessageConfig(allowed_senders=allowed if allowed else None)
+        config = IMessageConfig(allowed_senders=list(allowed) if allowed else [])
 
         _ChannelState.agent = agent
         _ChannelState.thread_id = thread_id

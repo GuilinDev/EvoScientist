@@ -16,7 +16,7 @@ def _mcp_list_servers() -> None:
 
     if not config:
         console.print("[dim]No MCP servers configured.[/dim]")
-        console.print("[dim]Add one with:[/dim] /mcp add <name> <transport> <command-or-url> [args...]")
+        console.print("[dim]Add one with:[/dim] /mcp add <name> <command-or-url> [args...]")
         console.print()
         return
 

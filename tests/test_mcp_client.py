@@ -399,7 +399,7 @@ class TestParseMcpAddArgs:
 
     def test_ws_auto_detected(self):
         r = parse_mcp_add_args(["ws", "ws://localhost:9090"])
-        assert r["transport"] == "http"
+        assert r["transport"] == "websocket"
 
     def test_explicit_transport_override(self):
         r = parse_mcp_add_args(["srv", "https://example.com/sse", "--transport", "sse"])

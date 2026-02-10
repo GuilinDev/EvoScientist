@@ -317,23 +317,23 @@ EvoScientist supports [MCP](https://modelcontextprotocol.io/) servers, allowing 
 The quickest way to add an MCP server is from the CLI:
 
 ```Shell
-# stdio transport (local process)
-EvoSci mcp add filesystem stdio npx -- -y @modelcontextprotocol/server-filesystem /tmp
+# stdio transport (auto-detected from command)
+EvoSci mcp add filesystem npx -- -y @modelcontextprotocol/server-filesystem /tmp
 
-# http transport
-EvoSci mcp add brave-search http http://localhost:8080/mcp -H "Authorization:Bearer ${BRAVE_API_KEY}"
+# http transport (auto-detected from URL)
+EvoSci mcp add brave-search http://localhost:8080/mcp -H "Authorization:Bearer ${BRAVE_API_KEY}"
 
 # sse transport, routed to a specific agent
-EvoSci mcp add my-sse sse http://localhost:9090/sse -e research-agent
+EvoSci mcp add my-sse http://localhost:9090/sse --transport sse -e research-agent
 
 # With tool allowlist
-EvoSci mcp add fs stdio npx -- -y @modelcontextprotocol/server-filesystem /tmp -t read_file,write_file
+EvoSci mcp add fs npx -- -y @modelcontextprotocol/server-filesystem /tmp -t read_file,write_file
 ```
 
 Or from the interactive CLI:
 
 ```
-/mcp add filesystem stdio npx -y @modelcontextprotocol/server-filesystem /tmp
+/mcp add filesystem npx -y @modelcontextprotocol/server-filesystem /tmp
 /mcp remove filesystem
 /mcp list
 ```

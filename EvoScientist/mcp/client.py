@@ -216,8 +216,10 @@ def remove_mcp_server(name: str) -> bool:
 
 
 def _infer_transport(target: str) -> str:
-    """Return ``'http'`` if *target* looks like a URL, else ``'stdio'``."""
-    if target.startswith(("http://", "https://", "ws://", "wss://")):
+    """Return transport type inferred from *target* URL scheme."""
+    if target.startswith(("ws://", "wss://")):
+        return "websocket"
+    if target.startswith(("http://", "https://")):
         return "http"
     return "stdio"
 
@@ -589,7 +591,7 @@ async def _load_tools(config: dict[str, Any]) -> dict[str, list]:
     except ImportError:
         raise ImportError(
             "MCP servers are configured but langchain-mcp-adapters is not installed.\n"
-            "Install with: pip install 'evoscientist[mcp]'"
+            "Install with: pip install langchain-mcp-adapters"
         )
 
     connections = _build_connections(config)

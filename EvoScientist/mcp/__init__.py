@@ -1,6 +1,5 @@
-"""MCP (Model Context Protocol) integration — optional external tool support.
+"""MCP (Model Context Protocol) integration — external tool support.
 
-Install with: pip install "evoscientist[mcp]"
 See mcp/README.md for usage details.
 """
 

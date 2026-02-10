@@ -25,11 +25,6 @@ from typing import Callable
 from . import IMessageChannel, IMessageConfig
 from ..base import OutgoingMessage
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -223,7 +218,7 @@ class IMessageServer:
                 await self.channel.send(OutgoingMessage(
                     recipient=sender,
                     content=response,
-                    metadata=metadata,
+                    metadata=metadata or {},
                 ))
                 if self._on_activity:
                     try:
@@ -387,7 +382,7 @@ async def async_main():
     config = IMessageConfig(
         cli_path=args.cli_path,
         db_path=args.db_path,
-        allowed_senders=set(args.allowed_senders) if args.allowed_senders else None,
+        allowed_senders=list(args.allowed_senders) if args.allowed_senders else [],
         include_attachments=args.attachments,
     )
 
@@ -421,6 +416,11 @@ async def async_main():
 
 def main():
     """Entry point."""
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     asyncio.run(async_main())
 
 

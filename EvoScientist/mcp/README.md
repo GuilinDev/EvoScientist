@@ -1,12 +1,8 @@
 # MCP (Model Context Protocol) Integration
 
-Optional feature for connecting external tools to EvoScientist agents via [MCP](https://modelcontextprotocol.io/).
+Connects external tools to EvoScientist agents via [MCP](https://modelcontextprotocol.io/).
 
-## Install
-
-```bash
-pip install "evoscientist[mcp]"
-```
+Included with `pip install evoscientist` (requires `langchain-mcp-adapters`).
 
 ## Quick Start
 
