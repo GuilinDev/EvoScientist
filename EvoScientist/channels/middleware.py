@@ -14,11 +14,10 @@ import asyncio
 import dataclasses
 import logging
 import random
-import re
 import time
-from collections import OrderedDict, defaultdict, deque
+from collections import OrderedDict, deque
 from collections.abc import Awaitable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from .bus.events import InboundMessage, OutboundMessage
@@ -527,7 +526,7 @@ class RetryMiddleware:
     """
 
     def __init__(self, channel_name: str = "unknown") -> None:
-        from .retry import RetryConfig, DEFAULT_RETRY, RETRY_PRESETS
+        from .retry import DEFAULT_RETRY, RETRY_PRESETS
         self._config = RETRY_PRESETS.get(channel_name, DEFAULT_RETRY)
         self._channel_name = channel_name
 

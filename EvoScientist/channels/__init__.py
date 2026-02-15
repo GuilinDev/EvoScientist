@@ -4,10 +4,14 @@ This module provides an extensible interface for different messaging channels
 (iMessage, Telegram, Discord) to communicate with the EvoScientist agent.
 """
 
-from .base import Channel, RawIncoming, IncomingMessage, OutgoingMessage
+from .base import Channel, RawIncoming, IncomingMessage, OutgoingMessage, chunk_text
 from .bus import MessageBus, InboundMessage, OutboundMessage
+from .capabilities import ChannelCapabilities
 from .channel_manager import ChannelManager, register_channel, create_channel, available_channels
 from .consumer import InboundConsumer
+from .formatter import UnifiedFormatter
+from .middleware import TypingManager
+from .plugin import ChannelPlugin, ChannelMeta, ReloadPolicy
 from .standalone import run_standalone
 
 # Backward compat: ChannelServer is now Channel itself
@@ -27,6 +31,7 @@ __all__ = [
     "run_standalone",
     "register_channel",
     "create_channel",
+    "available_channels",
     # New modules
     "ChannelCapabilities",
     "UnifiedFormatter",
@@ -37,11 +42,3 @@ __all__ = [
     "ChannelMeta",
     "ReloadPolicy",
 ]
-
-from .capabilities import ChannelCapabilities
-from .formatter import UnifiedFormatter
-from .middleware import TypingManager
-from .base import chunk_text
-
-# Plugin architecture
-from .plugin import ChannelPlugin, ChannelMeta, ReloadPolicy

@@ -7,7 +7,7 @@ streaming, threading, etc.) without per-channel branching in core logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 FormatType = Literal["html", "markdown", "slack_mrkdwn", "discord", "plain"]

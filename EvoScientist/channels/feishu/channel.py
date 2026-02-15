@@ -16,15 +16,18 @@ Send API:
   - ``POST /open-apis/im/v1/messages?receive_id_type=chat_id``
 """
 
-import asyncio
+from __future__ import annotations
+
 import json
 import logging
 import re
-import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from aiohttp import web
 
 from ..base import Channel, RawIncoming, ChannelError
 from ..capabilities import FEISHU as FEISHU_CAPS

@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 from urllib.parse import quote_plus
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -212,7 +211,6 @@ class DingTalkChannel(Channel, WebSocketMixin, TokenMixin):
             return
 
         sender_id = payload.get("senderStaffId") or payload.get("senderId", "")
-        conv_id = payload.get("conversationId", "")
         is_group = payload.get("conversationType") == "2"
         # For send API (oToMessages/batchSend), userIds needs staffId, not conversationId
         chat_id = sender_id

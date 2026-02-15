@@ -24,7 +24,7 @@ from .backends import CustomSandboxBackend, MergedReadOnlyBackend
 from .config import get_effective_config, apply_config_to_env
 from .llm import get_chat_model
 from .mcp import load_mcp_tools
-from .middleware import create_memory_middleware, create_skills_middleware
+from .middleware import create_memory_middleware
 from .prompts import RESEARCHER_INSTRUCTIONS, get_system_prompt
 from .utils import load_subagents
 from .tools import tavily_search, think_tool, skill_manager, view_image

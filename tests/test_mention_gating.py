@@ -3,7 +3,6 @@
 import asyncio
 from dataclasses import dataclass
 
-import pytest
 
 from EvoScientist.channels.base import Channel, RawIncoming
 from EvoScientist.channels.capabilities import ChannelCapabilities

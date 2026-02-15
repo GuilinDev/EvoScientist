@@ -17,16 +17,20 @@ Both backends use httpx (already a core dependency) and aiohttp for
 webhook server — matching the Feishu channel pattern.
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
-import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aiohttp import web
 
 from ..mixins import WebhookMixin, TokenMixin
 from ..base import Channel, RawIncoming, ChannelError
@@ -412,7 +416,7 @@ class WeChatChannel(Channel, WebhookMixin, TokenMixin):
                 if ann:
                     annotations.append(ann)
             else:
-                annotations.append(f"[image: no download source]")
+                annotations.append("[image: no download source]")
         elif msg_type == "voice":
             recognition = xml_data.get("Recognition", "")
             media_id = xml_data.get("MediaId", "")

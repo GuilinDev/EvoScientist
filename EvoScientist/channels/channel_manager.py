@@ -11,7 +11,6 @@ account management (formerly ``account.py``), and pipeline assembly
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import importlib
 import json
 import logging
@@ -22,9 +21,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from .base import Channel, RawIncoming, OutboundMessage
+from .base import Channel, OutboundMessage
 from .bus import MessageBus
-from .bus.events import InboundMessage
+from .middleware import OutboundMiddlewareBase
 from .plugin import ChannelPlugin
 
 logger = logging.getLogger(__name__)
@@ -244,10 +243,6 @@ class AccountManager:
 # ═════════════════════════════════════════════════════════════════════
 # Inbound / outbound pipelines (formerly pipeline.py)
 # ═════════════════════════════════════════════════════════════════════
-
-from .middleware import (
-    OutboundMiddlewareBase,
-)
 
 
 class OutboundPipeline:

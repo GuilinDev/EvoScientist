@@ -14,9 +14,15 @@ Usage:
     await server.stop()
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +95,7 @@ class VerifyServer:
     def is_verified(self) -> bool:
         return self._verified.is_set()
 
-    async def _handle(self, request) -> "web.Response":
+    async def _handle(self, request) -> web.Response:
         """Handle GET verification request.
 
         During onboarding we use a lenient approach:
@@ -163,7 +169,7 @@ class VerifyServer:
         self._verified.set()
         return web.Response(text=echostr)
 
-    async def _handle_post(self, request) -> "web.Response":
+    async def _handle_post(self, request) -> web.Response:
         """Handle POST — just acknowledge during verification phase."""
         from aiohttp import web
         return web.Response(text="success")

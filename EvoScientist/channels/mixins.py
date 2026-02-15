@@ -16,9 +16,8 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Callable
+from typing import Any
 
-from .base import Channel, ChannelError
 
 logger = logging.getLogger(__name__)
 

@@ -209,7 +209,6 @@ class QQChannel(Channel):
         from pathlib import Path
         chat_id = self._resolve_media_chat_id(recipient, metadata)
         msg_type = (metadata or {}).get("msg_type", "c2c")
-        msg_id = (metadata or {}).get("event_id", "")
         ext = Path(file_path).suffix.lower()
         file_type = self._FILE_TYPE_MAP.get(ext, 1)  # default to image
 

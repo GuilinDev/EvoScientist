@@ -13,11 +13,9 @@ References:
 
 import base64
 import hashlib
-import socket
 import struct
 import time
 import xml.etree.ElementTree as ET
-from typing import Optional
 
 # Crypto imports — all from the Python standard library + pycryptodome
 # (but we'll use a pure-Python fallback if not available)

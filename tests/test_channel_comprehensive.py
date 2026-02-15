@@ -15,13 +15,10 @@ Test groups:
 from __future__ import annotations
 
 import asyncio
-import re
 import time
-from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -38,7 +35,7 @@ from EvoScientist.channels.bus.events import (
     OutboundMessage as BusOutbound,
 )
 from EvoScientist.channels.bus.message_bus import MessageBus
-from EvoScientist.channels.channel_manager import ChannelManager, ChannelHealth
+from EvoScientist.channels.channel_manager import ChannelManager
 from EvoScientist.channels.consumer import InboundConsumer
 from EvoScientist.channels.middleware import DedupCache
 from EvoScientist.channels.retry import RetryConfig, RetryInfo, retry_async
@@ -363,7 +360,7 @@ class TestMarkdownUtils:
 
         result = convert_markdown(
             text,
-            code_block_formatter=lambda l, c: f"[CODE]{c}[/CODE]",
+            code_block_formatter=lambda lang, c: f"[CODE]{c}[/CODE]",
             inline_code_formatter=lambda c: f"[IC]{c}[/IC]",
             inline_rules=[],
             escape_fn=bad_escape,
@@ -382,7 +379,7 @@ class TestMarkdownUtils:
         text = "Normal text with \x00BLOCK0\x00 in it"
         result = convert_markdown(
             text,
-            code_block_formatter=lambda l, c: f"<pre>{c}</pre>",
+            code_block_formatter=lambda lang, c: f"<pre>{c}</pre>",
             inline_code_formatter=lambda c: f"<code>{c}</code>",
             inline_rules=[],
         )
@@ -393,7 +390,7 @@ class TestMarkdownUtils:
         text = "before `` after"
         result = convert_markdown(
             text,
-            code_block_formatter=lambda l, c: c,
+            code_block_formatter=lambda lang, c: c,
             inline_code_formatter=lambda c: f"[{c}]",
             inline_rules=[],
         )
@@ -1213,7 +1210,7 @@ class TestInboundConsumer:
         async def _test():
             consumer = self._make_consumer()
             # Start and immediately stop
-            task = asyncio.create_task(consumer.run())
+            asyncio.create_task(consumer.run())
             await asyncio.sleep(0.1)
             await consumer.stop()
             await asyncio.sleep(0.1)
@@ -1232,7 +1229,7 @@ class TestInboundConsumerErrorHandling:
             ch = StubChannel()
             mgr.register(ch)
 
-            consumer = InboundConsumer(
+            _consumer = InboundConsumer(
                 bus=bus, manager=mgr, agent=MagicMock(),
                 thread_id="",
             )

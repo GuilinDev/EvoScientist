@@ -2,7 +2,6 @@
 
 import asyncio
 
-import pytest
 
 from EvoScientist.channels.bus.events import InboundMessage, OutboundMessage
 from EvoScientist.channels.bus.message_bus import MessageBus

@@ -5,9 +5,8 @@ import asyncio
 import pytest
 
 from EvoScientist.channels.bus.message_bus import MessageBus
-from EvoScientist.channels.bus.events import InboundMessage, OutboundMessage
 from EvoScientist.channels.channel_manager import ChannelManager
-from EvoScientist.channels.base import Channel, InboundMessage, OutboundMessage
+from EvoScientist.channels.base import Channel, OutboundMessage
 
 
 def _run(coro):

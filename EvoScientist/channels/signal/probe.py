@@ -9,7 +9,8 @@ async def validate_signal(
     rpc_port: int = 7583,
 ) -> tuple[bool, str]:
     """Validate Signal setup by checking signal-cli availability."""
-    import asyncio, subprocess
+    import asyncio
+    import subprocess
 
     if not phone_number:
         return False, "phone_number is required"

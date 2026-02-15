@@ -483,10 +483,6 @@ def cmd_interactive(
                             state["agent"] = _load_agent(workspace_dir=state["workspace_dir"], checkpointer=checkpointer)
                             state["thread_id"] = generate_thread_id()
                             state["resumed"] = False
-                            # Sync shared refs if channel is running
-                            if _ChannelState.is_running():
-                                _ChannelState.agent = state["agent"]
-                                _ChannelState.thread_id = state["thread_id"]
                             console.print(f"[green]New session:[/green] [yellow]{state['thread_id']}[/yellow]")
                             if state["workspace_dir"]:
                                 console.print(f"[dim]Workspace:[/dim] [cyan]{_shorten_path(state['workspace_dir'])}[/cyan]\n")

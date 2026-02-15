@@ -50,12 +50,24 @@ def _strip_html(text: str) -> str:
 
 @dataclass
 class EmailConfig(BaseChannelConfig):
-    imap_host: str = ""; imap_port: int = 993; imap_username: str = ""; imap_password: str = ""
-    imap_mailbox: str = "INBOX"; imap_use_ssl: bool = True
-    smtp_host: str = ""; smtp_port: int = 587; smtp_username: str = ""; smtp_password: str = ""
-    smtp_use_tls: bool = True; from_address: str = ""
-    poll_interval: int = 30; mark_seen: bool = True; max_body_chars: int = 12000
-    subject_prefix: str = "Re: "; allowed_senders: set[str] | None = None; text_chunk_limit: int = 4096
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: str = ""
+    imap_mailbox: str = "INBOX"
+    imap_use_ssl: bool = True
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    from_address: str = ""
+    poll_interval: int = 30
+    mark_seen: bool = True
+    max_body_chars: int = 12000
+    subject_prefix: str = "Re: "
+    allowed_senders: set[str] | None = None
+    text_chunk_limit: int = 4096
 
 
 class EmailChannel(Channel, PollingMixin):
@@ -352,7 +364,8 @@ class EmailChannel(Channel, PollingMixin):
         await self._stop_polling()
         if self._imap:
             try:
-                self._imap.close(); self._imap.logout()
+                self._imap.close()
+                self._imap.logout()
             except Exception:
                 pass
             self._imap = None

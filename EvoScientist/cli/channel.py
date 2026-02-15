@@ -162,7 +162,7 @@ async def _bus_inbound_consumer(
     """
     from ..stream import events as _stream_events_mod
     from ..stream.display import (
-        console, display_final_results, create_streaming_display,
+        console, create_streaming_display,
     )
     from ..stream.state import StreamState
     from ..channels.consumer import _format_todo_list
