@@ -12,6 +12,7 @@ for the main thread to set a response via ``_set_channel_response()``.
 import asyncio
 import logging
 import queue
+import time
 import threading
 import uuid
 from dataclasses import dataclass
@@ -37,7 +38,7 @@ class ChannelMessage:
     content: str
     sender: str
     channel_type: str
-    metadata: Any = None
+    metadata: dict | None = None
     # Filled by the bus consumer so the main thread can send callbacks
     channel_ref: Any = None  # Channel instance (for thinking / todo / file)
     bus_ref: Any = None      # MessageBus (for publishing outbound)
@@ -116,8 +117,8 @@ def _channels_stop(channel_type: str | None = None) -> None:
                     _manager.stop_all(), _bus_loop,
                 )
                 future.result(timeout=10)
-            except Exception:
-                pass
+            except Exception as e:
+                _channel_logger.debug(f"Error stopping channels: {e}")
         if _manager:
             _manager.bus.stop()
         if _bus_thread:
@@ -136,8 +137,8 @@ def _channels_stop(channel_type: str | None = None) -> None:
                 _manager.remove_channel(channel_type), _bus_loop,
             )
             future.result(timeout=5)
-        except Exception:
-            pass
+        except Exception as e:
+            _channel_logger.debug(f"Error removing channel {channel_type}: {e}")
 
     if _manager and not _manager.running_channels():
         _cli_agent = None
@@ -170,7 +171,7 @@ def _start_channels_bus_mode(config, agent, thread_id: str, show_thinking: bool 
 
         async def _run():
             consumer = asyncio.create_task(
-                _bus_inbound_consumer(mgr.bus, mgr, show_thinking)
+                _bus_inbound_consumer(mgr.bus, mgr)
             )
             try:
                 await mgr.start_all()
@@ -193,7 +194,6 @@ def _start_channels_bus_mode(config, agent, thread_id: str, show_thinking: bool 
     thread.start()
 
     # Wait briefly for the loop to start
-    import time
     for _ in range(20):
         if _bus_loop is not None:
             break
@@ -218,9 +218,7 @@ def _add_channel_to_running_bus(channel_type: str, config) -> None:
     future.result(timeout=10)
 
 
-async def _bus_inbound_consumer(
-    bus, manager, show_thinking: bool = True,
-) -> None:
+async def _bus_inbound_consumer(bus, manager) -> None:
     """Consume inbound messages from bus and bridge to the main CLI thread.
 
     This does NOT invoke the agent.  It enqueues a ``ChannelMessage`` on
@@ -262,7 +260,12 @@ async def _bus_inbound_consumer(
         event = _enqueue_channel_message(cm)
 
         # Wait (non-blocking for asyncio) until main thread sets response
-        await asyncio.to_thread(event.wait)
+        _RESPONSE_TIMEOUT = 600  # 10 minutes max per message
+        replied = await asyncio.to_thread(event.wait, _RESPONSE_TIMEOUT)
+        if not replied:
+            _channel_logger.warning(
+                f"[bus] Response timeout ({_RESPONSE_TIMEOUT}s) for {cm.msg_id}"
+            )
         response = _pop_channel_response(cm.msg_id) or "No response"
 
         # Publish the response back through the bus → channel

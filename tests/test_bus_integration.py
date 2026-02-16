@@ -88,7 +88,7 @@ class TestBusInboundConsumer:
             manager.register(ch)
 
             consumer = asyncio.create_task(
-                _bus_inbound_consumer(bus, manager, False)
+                _bus_inbound_consumer(bus, manager)
             )
 
             await bus.publish_inbound(InboundMessage(
@@ -143,7 +143,7 @@ class TestBusInboundConsumer:
             manager.register(ch)
 
             consumer = asyncio.create_task(
-                _bus_inbound_consumer(bus, manager, False)
+                _bus_inbound_consumer(bus, manager)
             )
 
             await bus.publish_inbound(InboundMessage(
@@ -191,7 +191,7 @@ class TestBusInboundConsumer:
             manager.register(ch)
 
             consumer = asyncio.create_task(
-                _bus_inbound_consumer(bus, manager, False)
+                _bus_inbound_consumer(bus, manager)
             )
 
             await bus.publish_inbound(InboundMessage(
@@ -238,7 +238,7 @@ class TestBusInboundConsumer:
             manager.register(ch)
 
             consumer = asyncio.create_task(
-                _bus_inbound_consumer(bus, manager, False)
+                _bus_inbound_consumer(bus, manager)
             )
 
             await bus.publish_inbound(InboundMessage(

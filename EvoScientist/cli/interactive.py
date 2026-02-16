@@ -1,6 +1,7 @@
 """Interactive CLI mode and single-shot execution."""
 
 import asyncio
+import logging
 import os
 import queue
 import sys
@@ -44,6 +45,8 @@ from .channel import (
 import EvoScientist.cli.channel as _ch_mod
 from .mcp_ui import _cmd_mcp
 from .skills_cmd import _cmd_list_skills, _cmd_install_skill, _cmd_uninstall_skill
+
+_channel_logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -465,62 +468,39 @@ def cmd_interactive(
                 rx.append("]", style="dim")
                 console.print(rx)
                 _print_separator()
-                console.print()
+
+                def _send_to_channel(coro, label: str, timeout: int = 15) -> None:
+                    """Schedule an async channel send on the bus loop."""
+                    loop = _ch_mod._bus_loop
+                    if not loop:
+                        return
+                    try:
+                        asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=timeout)
+                    except Exception as e:
+                        _channel_logger.debug(f"{label} send failed: {e}")
 
                 def _send_thinking_to_channel(thinking: str) -> None:
-                    """Send thinking text to the channel (sync callback)."""
                     ch = msg.channel_ref
-                    loop = _ch_mod._bus_loop
-                    if ch and loop and ch.send_thinking:
-                        try:
-                            future = asyncio.run_coroutine_threadsafe(
-                                ch.send_thinking_message(
-                                    sender=msg.chat_id,
-                                    thinking=thinking,
-                                    metadata=msg.metadata,
-                                ),
-                                loop,
-                            )
-                            future.result(timeout=15)
-                        except Exception:
-                            pass
+                    if ch and ch.send_thinking:
+                        _send_to_channel(
+                            ch.send_thinking_message(sender=msg.chat_id, thinking=thinking, metadata=msg.metadata),
+                            "Thinking",
+                        )
 
                 def _send_todo_to_channel(items: list[dict]) -> None:
-                    """Send todo list to the channel (sync callback)."""
                     from ..channels.consumer import _format_todo_list
-                    ch = msg.channel_ref
-                    loop = _ch_mod._bus_loop
-                    if ch and loop:
-                        try:
-                            future = asyncio.run_coroutine_threadsafe(
-                                ch.send_todo_message(
-                                    sender=msg.chat_id,
-                                    content=_format_todo_list(items),
-                                    metadata=msg.metadata,
-                                ),
-                                loop,
-                            )
-                            future.result(timeout=15)
-                        except Exception:
-                            pass
+                    if msg.channel_ref:
+                        _send_to_channel(
+                            msg.channel_ref.send_todo_message(sender=msg.chat_id, content=_format_todo_list(items), metadata=msg.metadata),
+                            "Todo",
+                        )
 
                 def _send_media_to_channel(file_path: str) -> None:
-                    """Send media file back through the channel (sync callback)."""
-                    ch = msg.channel_ref
-                    loop = _ch_mod._bus_loop
-                    if ch and loop:
-                        try:
-                            future = asyncio.run_coroutine_threadsafe(
-                                ch.send_media(
-                                    recipient=msg.chat_id,
-                                    file_path=file_path,
-                                    metadata=msg.metadata,
-                                ),
-                                loop,
-                            )
-                            future.result(timeout=30)
-                        except Exception as e:
-                            console.print(f"[dim]Media send failed: {e}[/dim]")
+                    if msg.channel_ref:
+                        _send_to_channel(
+                            msg.channel_ref.send_media(recipient=msg.chat_id, file_path=file_path, metadata=msg.metadata),
+                            "Media", timeout=30,
+                        )
 
                 meta = _build_metadata(state["workspace_dir"], model)
                 try:
@@ -545,7 +525,7 @@ def cmd_interactive(
                 _print_separator()
 
                 # Redraw the ❯ prompt on a new line after separator
-                sys.stdout.write("\n\033[34;1m\u276f\033[0m ")
+                sys.stdout.write("\033[34;1m\u276f\033[0m ")
                 sys.stdout.flush()
 
             async def _check_channel_queue() -> None:
@@ -644,7 +624,7 @@ def cmd_interactive(
                             continue
 
                         if user_input.lower().startswith("/mcp"):
-                            _cmd_mcp(user_input[4:])
+                            _cmd_mcp(user_input[len("/mcp"):])
                             continue
 
                         if user_input.lower().startswith("/channel"):
@@ -663,6 +643,7 @@ def cmd_interactive(
                             state["agent"], user_input, state["thread_id"],
                             show_thinking, interactive=True, metadata=meta,
                         )
+                        console.print()
                         _print_separator()
 
                     except KeyboardInterrupt:

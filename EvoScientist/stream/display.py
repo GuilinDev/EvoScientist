@@ -547,7 +547,6 @@ def display_final_results(
             clean_response = clean_response.rstrip().removesuffix("...").rstrip()
         console.print()
         console.print(Markdown(clean_response or state.response_text))
-        console.print()
 
 
 # ---------------------------------------------------------------------------
