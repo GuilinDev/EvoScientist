@@ -1319,6 +1319,8 @@ def _step_channels(config: EvoScientistConfig) -> dict[str, object]:
         ("telegram",  "Telegram",  [("telegram_bot_token", "Bot token (from @BotFather)")], "telegram", "telegram"),
         ("discord",   "Discord",   [("discord_bot_token", "Bot token")], "discord", "discord"),
         ("slack",     "Slack",     [("slack_bot_token", "Bot token (xoxb-...)"), ("slack_app_token", "App token for Socket Mode (xapp-...)")], "slack_sdk", "slack"),
+        ("feishu",    "Feishu",    [("feishu_app_id", "App ID"), ("feishu_app_secret", "App Secret"), ("feishu_verification_token", "Verification Token"), ("feishu_encrypt_key", "Encrypt Key")], "aiohttp", "feishu"),
+        ("dingtalk",  "DingTalk",  [("dingtalk_client_id", "Client ID (AppKey)"), ("dingtalk_client_secret", "Client Secret (AppSecret)")], "aiohttp", "dingtalk"),
         ("wechat",    "WeChat",    [("wechat_wecom_corp_id", "WeCom Corp ID"), ("wechat_wecom_agent_id", "WeCom Agent ID"), ("wechat_wecom_secret", "WeCom Secret")], "aiohttp", "wechat"),
         ("imessage",  "iMessage",  [], None, None),  # handled via _setup_imessage()
     ]
@@ -1512,6 +1514,20 @@ def _probe_channel(
                     _val("wechat_wecom_secret"),
                     _val("wechat_proxy") or None,
                 )
+        elif ch_name == "feishu":
+            from ..channels.feishu.probe import validate_feishu_credentials
+            return await validate_feishu_credentials(
+                _val("feishu_app_id"),
+                _val("feishu_app_secret"),
+                _val("feishu_domain", "https://open.feishu.cn"),
+            )
+        elif ch_name == "dingtalk":
+            from ..channels.dingtalk.probe import validate_dingtalk
+            return await validate_dingtalk(
+                _val("dingtalk_client_id"),
+                _val("dingtalk_client_secret"),
+                _val("dingtalk_proxy") or None,
+            )
         else:
             return True, "No probe available"
 
