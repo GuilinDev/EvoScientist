@@ -2,6 +2,7 @@
 
 
 import re
+from pathlib import Path
 
 from EvoScientist.backends import (
     validate_command,
@@ -87,6 +88,66 @@ class TestConvertVirtualPaths:
         result = convert_virtual_paths_in_command("echo hello")
         assert result == "echo hello"
 
+    def test_system_path_with_workspace_converted(self):
+        """Hallucinated system path containing workspace dir should be fixed."""
+        result = convert_virtual_paths_in_command(
+            "mkdir -p /Users/user/project/workspace/swarm-discussion",
+            workspace_name="workspace",
+        )
+        assert result == "mkdir -p ./swarm-discussion"
+
+    def test_system_path_with_workspace_nested(self):
+        result = convert_virtual_paths_in_command(
+            "python /home/user/workspace/src/main.py",
+            workspace_name="workspace",
+        )
+        assert result == "python ./src/main.py"
+
+    def test_system_path_workspace_only(self):
+        result = convert_virtual_paths_in_command(
+            "ls /Users/user/Downloads/project/workspace",
+            workspace_name="workspace",
+        )
+        assert result == "ls ."
+
+    def test_system_path_with_shell_expansion(self):
+        """Paths with $(whoami) or similar should still be caught."""
+        result = convert_virtual_paths_in_command(
+            "mkdir -p /Users/$(whoami)/workspace/notes",
+            workspace_name="workspace",
+        )
+        assert result == "mkdir -p ./notes"
+
+    def test_system_path_custom_workspace_name(self):
+        """Should work with any workspace directory name, not just 'workspace'."""
+        result = convert_virtual_paths_in_command(
+            "mkdir -p /Users/user/my-project/data",
+            workspace_name="my-project",
+        )
+        assert result == "mkdir -p ./data"
+
+    def test_system_path_custom_workspace_name_only(self):
+        result = convert_virtual_paths_in_command(
+            "ls /home/user/experiment-1",
+            workspace_name="experiment-1",
+        )
+        assert result == "ls ."
+
+    def test_system_path_no_workspace_name_fallthrough(self):
+        """Without workspace_name, system paths get normal ./ treatment."""
+        result = convert_virtual_paths_in_command(
+            "cat /Users/user/workspace/file.txt",
+            workspace_name=None,
+        )
+        assert result == "cat ./Users/user/workspace/file.txt"
+
+    def test_system_path_without_workspace_unchanged(self):
+        """System paths not referencing workspace fall through to normal ./"""
+        result = convert_virtual_paths_in_command(
+            "cat /tmp/somefile", workspace_name="workspace",
+        )
+        assert result == "cat ./tmp/somefile"
+
 
 # === CustomSandboxBackend._resolve_path ===
 
@@ -114,6 +175,22 @@ class TestResolvePath:
         resolved = backend._resolve_path("/Users/someone/file.py")
         # Falls back to basename
         assert str(resolved).endswith("file.py")
+
+    def test_custom_workspace_name_prefix_stripped(self, tmp_path):
+        """_resolve_path uses the actual dir name, not hardcoded 'workspace'."""
+        ws = tmp_path / "my-project"
+        ws.mkdir()
+        backend = CustomSandboxBackend(root_dir=str(ws), virtual_mode=True)
+        resolved = backend._resolve_path("/my-project/main.py")
+        assert str(resolved).endswith("main.py")
+        assert "my-project/my-project" not in str(resolved)
+
+    def test_custom_workspace_name_system_path(self, tmp_path):
+        ws = tmp_path / "experiment-1"
+        ws.mkdir()
+        backend = CustomSandboxBackend(root_dir=str(ws), virtual_mode=True)
+        resolved = backend._resolve_path("/Users/someone/experiment-1/data/out.csv")
+        assert str(resolved).endswith("data/out.csv")
 
     def test_normal_virtual_path(self, tmp_workspace):
         backend = CustomSandboxBackend(root_dir=tmp_workspace, virtual_mode=True)
@@ -143,6 +220,20 @@ class TestSandboxId:
         backend = CustomSandboxBackend(root_dir=tmp_workspace, virtual_mode=True)
         suffix = backend.id[len("evosci-"):]
         assert re.fullmatch(r"[0-9a-f]{8}", suffix)
+
+
+# === execute() literal cwd sanitization ===
+
+class TestExecuteCwdSanitization:
+    def test_literal_workspace_path_replaced(self, tmp_workspace):
+        """execute() should replace literal workspace root path with ./"""
+        backend = CustomSandboxBackend(root_dir=tmp_workspace, virtual_mode=True)
+        # Create a subdir via the sanitized path
+        resp = backend.execute(f"mkdir -p {tmp_workspace}/test-sanitized && echo ok")
+        assert resp.exit_code == 0
+        # The dir should be created at workspace/test-sanitized, not nested
+        assert (Path(tmp_workspace) / "test-sanitized").is_dir()
+        assert not (Path(tmp_workspace) / tmp_workspace.lstrip("/")).exists()
 
 
 # === execute() output truncation ===

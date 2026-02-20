@@ -69,29 +69,53 @@ def validate_command(command: str) -> str | None:
     return None
 
 
-def convert_virtual_paths_in_command(command: str) -> str:
+def convert_virtual_paths_in_command(
+    command: str,
+    workspace_name: str | None = None,
+) -> str:
     """
     Convert virtual paths (starting with /) in commands to relative paths.
 
-    Examples:
-    - "python /main.py" -> "python ./main.py"
-    - "cat /data/file.txt" -> "cat ./data/file.txt"
-    - "ls /" -> "ls ."
-    - "python main.py" -> "python main.py" (unchanged)
+    Also auto-corrects hallucinated system absolute paths that reference the
+    workspace directory (e.g. ``/Users/.../myproject/file.py`` → ``./file.py``).
 
     Args:
-        command: Original command
+        command: Original command.
+        workspace_name: Basename of the workspace directory (e.g. ``"workspace"``,
+            ``"my-project"``).  When provided, system paths containing
+            ``/<workspace_name>/`` are auto-corrected.
 
-    Returns:
-        Converted command
+    Examples:
+        >>> convert_virtual_paths_in_command("python /main.py")
+        'python ./main.py'
+        >>> convert_virtual_paths_in_command("ls /")
+        'ls .'
+        >>> convert_virtual_paths_in_command(
+        ...     "mkdir -p /Users/u/proj/dir", workspace_name="proj")
+        'mkdir -p ./dir'
     """
 
-    def replace_virtual_path(match):
+    def replace_virtual_path(match: re.Match[str]) -> str:
         path = match.group(0)
 
         # Skip content that looks like a URL
         if '://' in command[max(0, match.start() - 10):match.end() + 10]:
             return path
+
+        # Fix hallucinated system absolute paths that reference the workspace.
+        # E.g. /Users/user/.../myproject/file.py → ./file.py
+        # This mirrors _resolve_path() logic but for shell command strings.
+        if workspace_name:
+            for prefix in _SYSTEM_PATH_PREFIXES:
+                if path.startswith(prefix):
+                    marker = f"/{workspace_name}/"
+                    idx = path.find(marker)
+                    if idx != -1:
+                        relative = path[idx + len(marker):]
+                        return "./" + relative if relative else "."
+                    elif path.endswith(f"/{workspace_name}"):
+                        return "."
+                    break  # Matched system prefix but no workspace → fall through
 
         # Convert virtual path
         if path == '/':
@@ -275,25 +299,27 @@ class CustomSandboxBackend(LocalShellBackend):
 
         Intercepts all file operations (read, write, edit, ls, grep, glob).
         Auto-corrects common LLM path mistakes instead of crashing:
-          1. /workspace/file.py           → /file.py
-          2. /Users/name/.../workspace/f  → /f  (strip up to workspace/)
-          3. /Users/name/file.py          → /file.py (keep basename)
+          1. /<ws_name>/file.py            → /file.py
+          2. /Users/name/.../<ws_name>/f   → /f  (strip up to ws dir)
+          3. /Users/name/file.py           → /file.py (keep basename)
         """
-        # Auto-strip /workspace/ prefix to prevent nesting
-        if key.startswith("/workspace/"):
-            key = key[len("/workspace"):]  # "/workspace/main.py" → "/main.py"
-        elif key == "/workspace":
+        ws_name = Path(str(self.cwd)).name  # e.g. "workspace", "my-project"
+
+        # Auto-strip /<ws_name>/ prefix to prevent nesting
+        ws_prefix = f"/{ws_name}/"
+        if key.startswith(ws_prefix):
+            key = key[len(ws_prefix) - 1:]  # "/<ws>/main.py" → "/main.py"
+        elif key == f"/{ws_name}":
             key = "/"
 
         # Auto-correct system absolute paths
         for prefix in _SYSTEM_PATH_PREFIXES:
             if key.startswith(prefix):
-                # Try to extract path after "workspace/" or "workspace" at end
-                marker = "/workspace/"
-                idx = key.find(marker)
+                # Try to extract path after "<ws_name>/"
+                idx = key.find(ws_prefix)
                 if idx != -1:
-                    key = "/" + key[idx + len(marker):]
-                elif key.endswith("/workspace"):
+                    key = "/" + key[idx + len(ws_prefix):]
+                elif key.endswith(f"/{ws_name}"):
                     key = "/"
                 else:
                     # Fall back to basename
@@ -322,9 +348,18 @@ class CustomSandboxBackend(LocalShellBackend):
                 truncated=False,
             )
 
+        # Replace literal workspace-root absolute paths with ./
+        # Catches cases where the agent uses the exact real path.
+        ws = str(self.cwd).rstrip("/") + "/"
+        if ws in command:
+            command = command.replace(ws, "./")
+
         # Convert virtual paths to relative paths
         if self.virtual_mode:
-            command = convert_virtual_paths_in_command(command=command)
+            command = convert_virtual_paths_in_command(
+                command=command,
+                workspace_name=Path(str(self.cwd)).name,
+            )
 
         # Delegate to parent for subprocess execution
         return super().execute(command)
