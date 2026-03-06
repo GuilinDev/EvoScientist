@@ -375,7 +375,7 @@ We thank the authors for their valuable contributions to the open-source communi
 
 #### Contributors
 
-Jan Piotrowski, Wiktor Cupiał, Yuyue Zhao, Xinhao Yi, Jakub Kaliski, Jakub Filipiuk, Shuyu Guo, Andreas Sauter, Jacopo Urbani, Zaiqiao Meng, Lun Zhou
+Jan Piotrowski, Wiktor Cupiał, Yuyue Zhao, Xinhao Yi, Jakub Kaliski, Jakub Filipiuk, Shuyu Guo, Andreas Sauter, Wenxiang Hu, Jacopo Urbani, Zaiqiao Meng, Jun Luo, Lun Zhou
 
 > <sup>†</sup>Project Lead & Engineering Lead <sup>‡</sup>Core Developer <sup>§</sup>Project Owner
 
