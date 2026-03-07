@@ -25,6 +25,7 @@ class StreamingTUIBackend(Protocol):
         on_todo: Callable[[list[dict]], None] | None = None,
         on_file_write: Callable[[str], None] | None = None,
         metadata: dict | None = None,
+        hitl_prompt_fn: Callable[[list], list[dict] | None] | None = None,
     ) -> str:
         """Run streaming and return final response text."""
 
@@ -47,6 +48,7 @@ class RichStreamingBackend:
         on_todo: Callable[[list[dict]], None] | None = None,
         on_file_write: Callable[[str], None] | None = None,
         metadata: dict | None = None,
+        hitl_prompt_fn: Callable[[list], list[dict] | None] | None = None,
     ) -> str:
         return _run_streaming(
             agent=agent,
@@ -58,4 +60,5 @@ class RichStreamingBackend:
             on_todo=on_todo,
             on_file_write=on_file_write,
             metadata=metadata,
+            hitl_prompt_fn=hitl_prompt_fn,
         )

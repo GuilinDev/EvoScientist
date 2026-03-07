@@ -95,6 +95,8 @@ class StreamState:
         # Token usage tracking
         self.total_input_tokens = 0
         self.total_output_tokens = 0
+        # HITL interrupt tracking
+        self.pending_interrupt: dict | None = None
         # Cached Markdown object for Rich CLI display (avoids O(n²) re-parsing)
         self._cached_md_text: str = ""
         self._cached_md: object | None = None
@@ -253,6 +255,9 @@ class StreamState:
                     if sa.is_active:
                         sa.is_active = False
                         break
+
+        elif event_type == "interrupt":
+            self.pending_interrupt = event
 
         elif event_type == "usage_stats":
             self.total_input_tokens += event.get("input_tokens", 0)

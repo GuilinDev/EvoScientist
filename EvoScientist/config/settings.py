@@ -177,6 +177,10 @@ class EvoScientistConfig:
     # Shared webhook port (0 = disabled)
     shared_webhook_port: int = 9000
 
+    # HITL (Human-in-the-Loop) Settings
+    auto_approve: bool = False  # Auto-approve all tool executions without prompting
+    shell_allow_list: str = ""  # Comma-separated shell command prefixes to auto-approve
+
     # DM access control policy
     dm_policy: str = "allowlist"
 

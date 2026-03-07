@@ -20,7 +20,7 @@ _COLLAPSE_CHARS = 400
 class ToolCallWidget(Vertical):
     """Displays a single tool call with running spinner → result.
 
-    Lifecycle: ``running`` → ``success`` | ``error`` | ``interrupted``
+    Lifecycle: ``running`` → ``success`` | ``error`` | ``interrupted`` | ``rejected``
 
     Usage::
 
@@ -107,6 +107,9 @@ class ToolCallWidget(Vertical):
         elif self._status == "interrupted":
             line.append("\u25a0 ", style="bold yellow")
             line.append(compact, style="bold yellow dim")
+        elif self._status == "rejected":
+            line.append("\u25a0 ", style="bold yellow")
+            line.append(compact, style="bold yellow dim")
         else:
             line.append("\u2717 ", style="bold red")
             line.append(compact, style="bold red")
@@ -124,6 +127,8 @@ class ToolCallWidget(Vertical):
             status_w.update(Text(f"\u2713 {summary}", style="green dim"))
         elif self._status == "interrupted":
             status_w.update(Text("\u25a0 interrupted", style="yellow dim"))
+        elif self._status == "rejected":
+            status_w.update(Text("\u25a0 rejected", style="yellow dim"))
         else:
             summary = self._result_summary()
             status_w.update(Text(f"\u2717 {summary}", style="red dim"))
@@ -154,6 +159,14 @@ class ToolCallWidget(Vertical):
     def set_interrupted(self) -> None:
         """Mark tool call as interrupted/cancelled."""
         self._status = "interrupted"
+        self._stop_timer()
+        with self.app.batch_update():
+            self._render_header()
+            self._render_status()
+
+    def set_rejected(self) -> None:
+        """Mark tool call as rejected by HITL approval."""
+        self._status = "rejected"
         self._stop_timer()
         with self.app.batch_update():
             self._render_header()

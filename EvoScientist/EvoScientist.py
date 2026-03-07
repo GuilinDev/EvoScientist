@@ -393,7 +393,13 @@ def create_cli_agent(workspace_dir: str | None = None, checkpointer=None, config
     # Re-load MCP tools from current config (picks up /mcp add changes)
     kwargs = load_mcp_and_build_kwargs(be, mw)
 
+    # HITL: gate shell execution for user approval
+    _interrupt_on: dict[str, bool] | None = None
+    if not cfg.auto_approve:
+        _interrupt_on = {"execute": True}
+
     return create_deep_agent(
         **kwargs,
         checkpointer=checkpointer,
+        interrupt_on=_interrupt_on,
     ).with_config({"recursion_limit": 1000})

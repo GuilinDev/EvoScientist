@@ -98,6 +98,18 @@ class StreamEventEmitter:
         })
 
     @staticmethod
+    def interrupt(
+        interrupt_id: str, action_requests: list, review_configs: list | None = None,
+    ) -> StreamEvent:
+        """Human-in-the-loop interrupt event."""
+        return StreamEvent("interrupt", {
+            "type": "interrupt",
+            "interrupt_id": interrupt_id,
+            "action_requests": action_requests,
+            "review_configs": review_configs or [],
+        })
+
+    @staticmethod
     def error(message: str) -> StreamEvent:
         """Error event."""
         return StreamEvent("error", {"type": "error", "message": message})

@@ -294,6 +294,8 @@ def run_textual_interactive(
             self._queued_messages: list[str] = []  # queued messages to send after current turn
             self._comp_items: list[tuple[str, str]] = []
             self._comp_index: int = -1
+            self._hitl_auto_approve: bool = False
+            self._approval_future: asyncio.Future | None = None
 
         # ── Layout ─────────────────────────────────────────────
 
@@ -383,6 +385,25 @@ def run_textual_interactive(
             container.mount(Static(renderable))
             container.scroll_end(animate=False)
 
+        async def _wait_for_approval(self, approval_widget) -> Any:
+            """Wait for user to interact with an ApprovalWidget.
+
+            Returns the ``ApprovalWidget.Decided`` message, or ``None`` on
+            timeout / cancellation.
+            """
+            self._approval_future = asyncio.get_event_loop().create_future()
+            try:
+                return await asyncio.wait_for(self._approval_future, timeout=300)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                return None
+            finally:
+                self._approval_future = None
+
+        def on_approval_widget_decided(self, event) -> None:  # type: ignore[override]
+            """Handle ApprovalWidget.Decided message."""
+            if self._approval_future and not self._approval_future.done():
+                self._approval_future.set_result(event)
+
         # ── Streaming core ─────────────────────────────────────
 
         async def _stream_with_widgets(
@@ -393,6 +414,7 @@ def run_textual_interactive(
             on_todo_cb: Callable[[list[dict]], None] | None = None,
             on_media_cb: Callable[[str], None] | None = None,
             skip_user_message: bool = False,
+            channel_hitl_fn: Callable[[list], list[dict] | None] | None = None,
         ) -> str:
             """Stream agent events and mount widgets.  Returns response text.
 
@@ -402,6 +424,9 @@ def run_textual_interactive(
             Args:
                 skip_user_message: If True, don't mount UserMessage (caller
                     already mounted it — e.g. channel messages with labels).
+                channel_hitl_fn: Optional channel-based HITL approval function.
+                    When provided (channel messages), this is called instead
+                    of mounting the ApprovalWidget.
             """
             container = self.query_one("#chat", VerticalScroll)
 
@@ -532,349 +557,422 @@ def run_textual_interactive(
                     return w
                 return None
 
-            try:
-                async for event in stream_agent_events(
-                    self._agent,
-                    user_text,
-                    self._conversation_tid,
-                    metadata=metadata,
-                ):
-                    event_type = state.handle_event(event)
+            _MAX_HITL_ROUNDS = 50
+            _stream_input: Any = user_text  # str or Command for HITL resume
 
-                    # -- Channel callbacks (thinking, todo, media) --
-                    if (
-                        on_thinking_cb
-                        and not _thinking_sent
-                        and state.thinking_text
-                        and event_type != "thinking"
-                        and len(state.thinking_text) >= _MIN_THINKING_LEN
+            for _hitl_round in range(_MAX_HITL_ROUNDS):
+                state.pending_interrupt = None
+                _hitl_resuming = False
+                try:
+                    async for event in stream_agent_events(
+                        self._agent,
+                        _stream_input,
+                        self._conversation_tid,
+                        metadata=metadata,
                     ):
-                        on_thinking_cb(state.thinking_text.rstrip())
-                        _thinking_sent = True
+                        event_type = state.handle_event(event)
 
-                    if (
-                        on_todo_cb
-                        and not _todo_sent
-                        and event_type == "tool_call"
-                        and event.get("name") == "write_todos"
-                        and state.todo_items
-                    ):
+                        # -- Channel callbacks (thinking, todo, media) --
                         if (
                             on_thinking_cb
                             and not _thinking_sent
                             and state.thinking_text
+                            and event_type != "thinking"
                             and len(state.thinking_text) >= _MIN_THINKING_LEN
                         ):
                             on_thinking_cb(state.thinking_text.rstrip())
                             _thinking_sent = True
-                        on_todo_cb(state.todo_items)
-                        _todo_sent = True
 
-                    if (
-                        on_media_cb
-                        and event_type == "tool_result"
-                        and event.get("success")
-                    ):
-                        tool_name = event.get("name", "")
-                        if tool_name in ("write_file", "read_file"):
-                            _forward_media_to_channel(
-                                state, tool_name, _media_sent, on_media_cb,
+                        if (
+                            on_todo_cb
+                            and not _todo_sent
+                            and event_type == "tool_call"
+                            and event.get("name") == "write_todos"
+                            and state.todo_items
+                        ):
+                            if (
+                                    on_thinking_cb
+                                    and not _thinking_sent
+                                    and state.thinking_text
+                                    and len(state.thinking_text) >= _MIN_THINKING_LEN
+                            ):
+                                    on_thinking_cb(state.thinking_text.rstrip())
+                                    _thinking_sent = True
+                            on_todo_cb(state.todo_items)
+                            _todo_sent = True
+
+                        if (
+                            on_media_cb
+                            and event_type == "tool_result"
+                            and event.get("success")
+                        ):
+                            tool_name = event.get("name", "")
+                            if tool_name in ("write_file", "read_file"):
+                                    _forward_media_to_channel(
+                                        state, tool_name, _media_sent, on_media_cb,
+                                    )
+
+                        # -- Remove loading spinner on first content event --
+                        if not loading_removed and event_type in (
+                            "thinking", "text", "tool_call",
+                        ):
+                            await loading.cleanup()
+                            loading_removed = True
+
+                        # -- Widget dispatch --
+                        if event_type == "thinking":
+                            if thinking_w is None:
+                                    thinking_w = ThinkingWidget(show_thinking=show_thinking)
+                                    await container.mount(thinking_w)
+                            thinking_w.append_text(event.get("content", ""))
+
+                        elif event_type == "text":
+                            if thinking_w is not None and thinking_w._is_active:
+                                    thinking_w.finalize()
+                            # Clear processing indicator
+                            await _remove_w(processing_w)
+                            processing_w = None
+
+                            if has_used_tools and not _is_final_response(state):
+                                    # Tools still running — show intermediate narration
+                                    await _remove_w(narration_w)
+                                    narration_w = None
+                                    last_line = state.latest_text.strip().split("\n")[-1].strip()
+                                    if last_line:
+                                        if len(last_line) > 60:
+                                            last_line = last_line[:57] + "\u2026"
+                                        narration_w = Static(
+                                            Text(f"    {last_line}", style="dim italic"),
+                                        )
+                                        await container.mount(narration_w)
+                            else:
+                                    # Stream final response incrementally (both
+                                    # text-only replies and post-tool responses).
+                                    await _remove_w(narration_w)
+                                    narration_w = None
+                                    if assistant_w is None:
+                                        assistant_w = AssistantMessage(state.response_text)
+                                        await container.mount(assistant_w)
+                                    else:
+                                        await assistant_w.append_content(
+                                            event.get("content", ""),
+                                        )
+
+                        elif event_type == "tool_call":
+                            tool_name = event.get("name", "unknown")
+                            tool_id = event.get("id", "")
+                            tool_args = event.get("args", {})
+                            # Finalize thinking if still active
+                            if thinking_w is not None and thinking_w._is_active:
+                                    thinking_w.finalize()
+                            # Clear transient indicators
+                            await _remove_w(narration_w)
+                            narration_w = None
+                            await _remove_w(processing_w)
+                            processing_w = None
+                            # Remove early AssistantMessage (text arrived before tools)
+                            if assistant_w is not None:
+                                    try:
+                                        await assistant_w.remove()
+                                    except Exception:
+                                        pass
+                                    assistant_w = None
+                            # Skip internal tools and task (handled by SubAgentWidget)
+                            if tool_name not in _INTERNAL_TOOLS and tool_name != "task":
+                                    has_used_tools = True
+                                    if tool_id and tool_id in tool_widgets:
+                                        # Re-emitted with updated args — update in place
+                                        existing = tool_widgets[tool_id]
+                                        existing._tool_name = tool_name
+                                        existing._tool_args = tool_args
+                                        try:
+                                            existing._render_header()
+                                        except Exception:
+                                            pass
+                                    else:
+                                        w = ToolCallWidget(tool_name, tool_args, tool_id)
+                                        await container.mount(w)
+                                        if tool_id:
+                                            tool_widgets[tool_id] = w
+                            # Update todo widget on write_todos
+                            if tool_name == "write_todos" and state.todo_items:
+                                    if todo_w is None:
+                                        todo_w = TodoWidget(state.todo_items)
+                                        await container.mount(todo_w)
+                                    else:
+                                        todo_w.update_items(state.todo_items)
+
+                        elif event_type == "tool_result":
+                            result_name = event.get("name", "unknown")
+                            result_content = event.get("content", "")
+                            result_success = event.get("success", True)
+                            # Match via state's deduplicated tool_calls (uses tool_id)
+                            matched = False
+                            matched_tid = ""
+                            result_idx = len(state.tool_results) - 1
+                            if 0 <= result_idx < len(state.tool_calls):
+                                    tc = state.tool_calls[result_idx]
+                                    tid = tc.get("id", "")
+                                    if tid and tid in tool_widgets:
+                                        tw = tool_widgets[tid]
+                                        if tw._status == "running":
+                                            if result_success:
+                                                    tw.set_success(result_content)
+                                            else:
+                                                    tw.set_error(result_content)
+                                            matched = True
+                                            matched_tid = tid
+                            # Fallback: match first running widget with same name
+                            if not matched:
+                                    for fid, tw in tool_widgets.items():
+                                        if tw.tool_name == result_name and tw._status == "running":
+                                            if result_success:
+                                                    tw.set_success(result_content)
+                                            else:
+                                                    tw.set_error(result_content)
+                                            matched = True
+                                            matched_tid = fid
+                                            break
+                            # Track completion order for collapsing
+                            if matched_tid and matched_tid not in completed_tool_order:
+                                    completed_tool_order.append(matched_tid)
+                                    await _collapse_completed_tools()
+                            # Update todo from results
+                            if result_name in ("write_todos", "read_todos") and state.todo_items:
+                                    if todo_w is None:
+                                        todo_w = TodoWidget(state.todo_items)
+                                        await container.mount(todo_w)
+                                    else:
+                                        todo_w.update_items(state.todo_items)
+                            # Show "Analyzing results..." if all tools done, no text yet
+                            if (
+                                    _is_final_response(state)
+                                    and not state.response_text
+                                    and processing_w is None
+                            ):
+                                    processing_w = Static(
+                                        Text("\u25cf Analyzing results...", style="cyan"),
+                                    )
+                                    await container.mount(processing_w)
+
+                        elif event_type == "subagent_start":
+                            sa_name = event.get("name", "sub-agent")
+                            sa_desc = event.get("description", "")
+                            existing = _find_or_rename_sa_widget(sa_name, sa_desc)
+                            if existing is None:
+                                    sa_w = SubAgentWidget(sa_name, sa_desc)
+                                    await container.mount(sa_w)
+                                    subagent_widgets[sa_name] = sa_w
+
+                        elif event_type == "subagent_tool_call":
+                            sa_name = event.get("subagent", "sub-agent")
+                            sa_name = state._resolve_subagent_name(sa_name)
+                            sa_w = _find_or_rename_sa_widget(sa_name)
+                            if sa_w is None:
+                                    sa_w = SubAgentWidget(sa_name)
+                                    await container.mount(sa_w)
+                                    subagent_widgets[sa_name] = sa_w
+                            await sa_w.add_tool_call(
+                                    event.get("name", "unknown"),
+                                    event.get("args", {}),
+                                    event.get("id", ""),
                             )
 
-                    # -- Remove loading spinner on first content event --
-                    if not loading_removed and event_type in (
-                        "thinking", "text", "tool_call",
-                    ):
-                        await loading.cleanup()
-                        loading_removed = True
+                        elif event_type == "subagent_tool_result":
+                            sa_name = event.get("subagent", "sub-agent")
+                            sa_name = state._resolve_subagent_name(sa_name)
+                            sa_w = _find_or_rename_sa_widget(sa_name)
+                            if sa_w is not None:
+                                    sa_w.complete_tool(
+                                        event.get("name", "unknown"),
+                                        event.get("content", ""),
+                                        event.get("success", True),
+                                        event.get("id", ""),
+                                    )
 
-                    # -- Widget dispatch --
-                    if event_type == "thinking":
-                        if thinking_w is None:
-                            thinking_w = ThinkingWidget(show_thinking=show_thinking)
-                            await container.mount(thinking_w)
-                        thinking_w.append_text(event.get("content", ""))
+                        elif event_type == "subagent_end":
+                            sa_name = event.get("name", "sub-agent")
+                            sa_name = state._resolve_subagent_name(sa_name)
+                            sa_w = _find_or_rename_sa_widget(sa_name)
+                            if sa_w is not None:
+                                    sa_w.finalize()
 
-                    elif event_type == "text":
-                        if thinking_w is not None and thinking_w._is_active:
-                            thinking_w.finalize()
-                        # Clear processing indicator
-                        await _remove_w(processing_w)
-                        processing_w = None
+                        elif event_type == "interrupt":
+                            action_reqs = event.get("action_requests", [])
+                            n = len(action_reqs) or 1
 
-                        if has_used_tools and not _is_final_response(state):
-                            # Tools still running — show intermediate narration
-                            await _remove_w(narration_w)
-                            narration_w = None
-                            last_line = state.latest_text.strip().split("\n")[-1].strip()
-                            if last_line:
-                                if len(last_line) > 60:
-                                    last_line = last_line[:57] + "\u2026"
-                                narration_w = Static(
-                                    Text(f"    {last_line}", style="dim italic"),
-                                )
-                                await container.mount(narration_w)
-                        else:
-                            # Stream final response incrementally (both
-                            # text-only replies and post-tool responses).
-                            await _remove_w(narration_w)
-                            narration_w = None
-                            if assistant_w is None:
-                                assistant_w = AssistantMessage(state.response_text)
-                                await container.mount(assistant_w)
+                            # HITL: check session auto-approve first
+                            if self._hitl_auto_approve:
+                                    from langgraph.types import Command  # type: ignore[import-untyped]
+                                    _stream_input = Command(resume={"decisions": [{"type": "approve"} for _ in range(n)]})
+                                    _hitl_resuming = True
+                                    break  # re-enter outer HITL loop
+
+                            # Channel messages: use channel-based text approval
+                            if channel_hitl_fn is not None:
+                                    self._append_system(
+                                        "Waiting for channel user approval...",
+                                        style="dim italic",
+                                    )
+                                    decisions = await asyncio.to_thread(
+                                        channel_hitl_fn, action_reqs,
+                                    )
+                                    if decisions is not None:
+                                        from langgraph.types import Command  # type: ignore[import-untyped]
+                                        _stream_input = Command(resume={"decisions": decisions})
+                                        _hitl_resuming = True
+                                        break  # re-enter outer HITL loop
+                                    else:
+                                        state.pending_interrupt = None
+                                        for tw in tool_widgets.values():
+                                            if tw._status == "running":
+                                                tw.set_rejected()
+                                        self._append_system(
+                                            "Tool execution rejected by channel user.",
+                                            style="yellow",
+                                        )
+                                    continue
+
+                            # Interactive TUI: mount approval widget
+                            from .widgets.approval_widget import ApprovalWidget
+                            approval_w = ApprovalWidget(action_reqs)
+                            await container.mount(approval_w)
+                            _schedule_scroll()
+                            decided_event = await self._wait_for_approval(approval_w)
+                            await approval_w.remove()
+                            if decided_event and decided_event.decisions is not None:
+                                    if decided_event.auto_approve_session:
+                                        self._hitl_auto_approve = True
+                                    from langgraph.types import Command  # type: ignore[import-untyped]
+                                    _stream_input = Command(resume={"decisions": decided_event.decisions})
+                                    _hitl_resuming = True
+                                    break  # re-enter outer HITL loop with resume
                             else:
-                                await assistant_w.append_content(
-                                    event.get("content", ""),
-                                )
+                                    state.pending_interrupt = None
+                                    for tw in tool_widgets.values():
+                                        if tw._status == "running":
+                                            tw.set_rejected()
+                                    self._append_system(
+                                        "Tool execution rejected.", style="yellow",
+                                    )
 
-                    elif event_type == "tool_call":
-                        tool_name = event.get("name", "unknown")
-                        tool_id = event.get("id", "")
-                        tool_args = event.get("args", {})
-                        # Finalize thinking if still active
-                        if thinking_w is not None and thinking_w._is_active:
-                            thinking_w.finalize()
-                        # Clear transient indicators
-                        await _remove_w(narration_w)
-                        narration_w = None
-                        await _remove_w(processing_w)
-                        processing_w = None
-                        # Remove early AssistantMessage (text arrived before tools)
-                        if assistant_w is not None:
-                            try:
-                                await assistant_w.remove()
-                            except Exception:
-                                pass
-                            assistant_w = None
-                        # Skip internal tools and task (handled by SubAgentWidget)
-                        if tool_name not in _INTERNAL_TOOLS and tool_name != "task":
-                            has_used_tools = True
-                            if tool_id and tool_id in tool_widgets:
-                                # Re-emitted with updated args — update in place
-                                existing = tool_widgets[tool_id]
-                                existing._tool_name = tool_name
-                                existing._tool_args = tool_args
+                        elif event_type == "done":
+                            # Clean up transient indicators
+                            await _remove_w(narration_w)
+                            narration_w = None
+                            await _remove_w(processing_w)
+                            processing_w = None
+                            # Mount final response
+                            if assistant_w is None and state.response_text:
+                                    # Strip trailing standalone "..."
+                                    clean = state.response_text.strip()
+                                    while clean.endswith("\n...") or clean.rstrip() == "...":
+                                        clean = clean.rstrip().removesuffix("...").rstrip()
+                                    assistant_w = AssistantMessage(clean or state.response_text)
+                                    await container.mount(assistant_w)
+                                    # Markdown rendering is async and needs multiple
+                                    # layout cycles to compute final height.  Schedule
+                                    # repeated deferred scrolls so long content stays
+                                    # visible even when Markdown takes time to lay out.
+                                    for delay in (0.15, 0.4, 0.8, 1.5):
+                                        self.set_timer(
+                                            delay,
+                                            lambda: self.call_after_refresh(
+                                                    lambda: container.scroll_end(animate=False),
+                                            ),
+                                        )
+                            # Mount token usage stats
+                            if state.total_input_tokens or state.total_output_tokens:
+                                    await container.mount(
+                                        UsageWidget(state.total_input_tokens, state.total_output_tokens)
+                                    )
+
+                        elif event_type == "error":
+                            error_msg = event.get("message", "Unknown error")
+                            self._append_system(f"Error: {error_msg}", style="red")
+
+                        # Scroll after Textual processes the layout update
+                        _schedule_scroll()
+
+                    response = (state.response_text or "").strip()
+
+                except asyncio.CancelledError:
+                    # Ctrl+C cancellation
+                    pass
+                except Exception as exc:
+                    error_msg = str(exc)
+                    if "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
+                        self._append_system(
+                            "Error: API key not configured.", style="red",
+                        )
+                        self._append_system(
+                            "Run EvoSci onboard to set up your API key.", style="dim",
+                        )
+                    else:
+                        self._append_system(f"Error: {exc}", style="red")
+                    response = f"Error: {exc}"
+                finally:
+                    # Clean up loading widget if it wasn't removed yet
+                    if not loading_removed:
+                        try:
+                            await loading.cleanup()
+                        except Exception:
+                            pass
+                    # Clean up transient indicators
+                    for w in (narration_w, processing_w):
+                        await _remove_w(w)
+                    # Mark any still-running tool widgets as interrupted
+                    # (skip if HITL approved — tools will continue next round)
+                    if not _hitl_resuming:
+                        for tw in tool_widgets.values():
+                            if tw._status == "running":
                                 try:
-                                    existing._render_header()
+                                    tw.set_interrupted()
                                 except Exception:
                                     pass
-                            else:
-                                w = ToolCallWidget(tool_name, tool_args, tool_id)
-                                await container.mount(w)
-                                if tool_id:
-                                    tool_widgets[tool_id] = w
-                        # Update todo widget on write_todos
-                        if tool_name == "write_todos" and state.todo_items:
-                            if todo_w is None:
-                                todo_w = TodoWidget(state.todo_items)
-                                await container.mount(todo_w)
-                            else:
-                                todo_w.update_items(state.todo_items)
-
-                    elif event_type == "tool_result":
-                        result_name = event.get("name", "unknown")
-                        result_content = event.get("content", "")
-                        result_success = event.get("success", True)
-                        # Match via state's deduplicated tool_calls (uses tool_id)
-                        matched = False
-                        matched_tid = ""
-                        result_idx = len(state.tool_results) - 1
-                        if 0 <= result_idx < len(state.tool_calls):
-                            tc = state.tool_calls[result_idx]
-                            tid = tc.get("id", "")
-                            if tid and tid in tool_widgets:
-                                tw = tool_widgets[tid]
-                                if tw._status == "running":
-                                    if result_success:
-                                        tw.set_success(result_content)
-                                    else:
-                                        tw.set_error(result_content)
-                                    matched = True
-                                    matched_tid = tid
-                        # Fallback: match first running widget with same name
-                        if not matched:
-                            for fid, tw in tool_widgets.items():
-                                if tw.tool_name == result_name and tw._status == "running":
-                                    if result_success:
-                                        tw.set_success(result_content)
-                                    else:
-                                        tw.set_error(result_content)
-                                    matched = True
-                                    matched_tid = fid
-                                    break
-                        # Track completion order for collapsing
-                        if matched_tid and matched_tid not in completed_tool_order:
-                            completed_tool_order.append(matched_tid)
-                            await _collapse_completed_tools()
-                        # Update todo from results
-                        if result_name in ("write_todos", "read_todos") and state.todo_items:
-                            if todo_w is None:
-                                todo_w = TodoWidget(state.todo_items)
-                                await container.mount(todo_w)
-                            else:
-                                todo_w.update_items(state.todo_items)
-                        # Show "Analyzing results..." if all tools done, no text yet
-                        if (
-                            _is_final_response(state)
-                            and not state.response_text
-                            and processing_w is None
-                        ):
-                            processing_w = Static(
-                                Text("\u25cf Analyzing results...", style="cyan"),
-                            )
-                            await container.mount(processing_w)
-
-                    elif event_type == "subagent_start":
-                        sa_name = event.get("name", "sub-agent")
-                        sa_desc = event.get("description", "")
-                        existing = _find_or_rename_sa_widget(sa_name, sa_desc)
-                        if existing is None:
-                            sa_w = SubAgentWidget(sa_name, sa_desc)
-                            await container.mount(sa_w)
-                            subagent_widgets[sa_name] = sa_w
-
-                    elif event_type == "subagent_tool_call":
-                        sa_name = event.get("subagent", "sub-agent")
-                        sa_name = state._resolve_subagent_name(sa_name)
-                        sa_w = _find_or_rename_sa_widget(sa_name)
-                        if sa_w is None:
-                            sa_w = SubAgentWidget(sa_name)
-                            await container.mount(sa_w)
-                            subagent_widgets[sa_name] = sa_w
-                        await sa_w.add_tool_call(
-                            event.get("name", "unknown"),
-                            event.get("args", {}),
-                            event.get("id", ""),
+                    # Finalize any still-active sub-agents
+                    for sa_w in subagent_widgets.values():
+                        if sa_w._is_active:
+                            try:
+                                    sa_w.finalize()
+                            except Exception:
+                                    pass
+                    # Finalize thinking widget
+                    if thinking_w is not None and thinking_w._is_active:
+                        try:
+                            thinking_w.finalize()
+                        except Exception:
+                            pass
+                    # Finalize assistant message stream
+                    if assistant_w is not None:
+                        await assistant_w.stop_stream()
+                    # Flush remaining thinking callback
+                    if (
+                        on_thinking_cb
+                        and not _thinking_sent
+                        and state.thinking_text
+                        and len(state.thinking_text) >= _MIN_THINKING_LEN
+                    ):
+                        on_thinking_cb(state.thinking_text.rstrip())
+                    # Final scrolls to ensure last content is visible.
+                    # Markdown layout is async — schedule multiple deferred
+                    # scrolls so long content eventually scrolls into view.
+                    self.call_after_refresh(
+                        lambda: container.scroll_end(animate=False),
+                    )
+                    for delay in (0.3, 0.8):
+                        self.set_timer(
+                            delay,
+                            lambda: self.call_after_refresh(
+                                    lambda: container.scroll_end(animate=False),
+                            ),
                         )
 
-                    elif event_type == "subagent_tool_result":
-                        sa_name = event.get("subagent", "sub-agent")
-                        sa_name = state._resolve_subagent_name(sa_name)
-                        sa_w = _find_or_rename_sa_widget(sa_name)
-                        if sa_w is not None:
-                            sa_w.complete_tool(
-                                event.get("name", "unknown"),
-                                event.get("content", ""),
-                                event.get("success", True),
-                                event.get("id", ""),
-                            )
-
-                    elif event_type == "subagent_end":
-                        sa_name = event.get("name", "sub-agent")
-                        sa_name = state._resolve_subagent_name(sa_name)
-                        sa_w = _find_or_rename_sa_widget(sa_name)
-                        if sa_w is not None:
-                            sa_w.finalize()
-
-                    elif event_type == "done":
-                        # Clean up transient indicators
-                        await _remove_w(narration_w)
-                        narration_w = None
-                        await _remove_w(processing_w)
-                        processing_w = None
-                        # Mount final response
-                        if assistant_w is None and state.response_text:
-                            # Strip trailing standalone "..."
-                            clean = state.response_text.strip()
-                            while clean.endswith("\n...") or clean.rstrip() == "...":
-                                clean = clean.rstrip().removesuffix("...").rstrip()
-                            assistant_w = AssistantMessage(clean or state.response_text)
-                            await container.mount(assistant_w)
-                            # Markdown rendering is async and needs multiple
-                            # layout cycles to compute final height.  Schedule
-                            # repeated deferred scrolls so long content stays
-                            # visible even when Markdown takes time to lay out.
-                            for delay in (0.15, 0.4, 0.8, 1.5):
-                                self.set_timer(
-                                    delay,
-                                    lambda: self.call_after_refresh(
-                                        lambda: container.scroll_end(animate=False),
-                                    ),
-                                )
-                        # Mount token usage stats
-                        if state.total_input_tokens or state.total_output_tokens:
-                            await container.mount(
-                                UsageWidget(state.total_input_tokens, state.total_output_tokens)
-                            )
-
-                    elif event_type == "error":
-                        error_msg = event.get("message", "Unknown error")
-                        self._append_system(f"Error: {error_msg}", style="red")
-
-                    # Scroll after Textual processes the layout update
-                    _schedule_scroll()
-
-                response = (state.response_text or "").strip()
-
-            except asyncio.CancelledError:
-                # Ctrl+C cancellation
-                pass
-            except Exception as exc:
-                error_msg = str(exc)
-                if "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
-                    self._append_system(
-                        "Error: API key not configured.", style="red",
-                    )
-                    self._append_system(
-                        "Run EvoSci onboard to set up your API key.", style="dim",
-                    )
-                else:
-                    self._append_system(f"Error: {exc}", style="red")
-                response = f"Error: {exc}"
-            finally:
-                # Clean up loading widget if it wasn't removed yet
-                if not loading_removed:
-                    try:
-                        await loading.cleanup()
-                    except Exception:
-                        pass
-                # Clean up transient indicators
-                for w in (narration_w, processing_w):
-                    await _remove_w(w)
-                # Mark any still-running tool widgets as interrupted
-                for tw in tool_widgets.values():
-                    if tw._status == "running":
-                        try:
-                            tw.set_interrupted()
-                        except Exception:
-                            pass
-                # Finalize any still-active sub-agents
-                for sa_w in subagent_widgets.values():
-                    if sa_w._is_active:
-                        try:
-                            sa_w.finalize()
-                        except Exception:
-                            pass
-                # Finalize thinking widget
-                if thinking_w is not None and thinking_w._is_active:
-                    try:
-                        thinking_w.finalize()
-                    except Exception:
-                        pass
-                # Finalize assistant message stream
-                if assistant_w is not None:
-                    await assistant_w.stop_stream()
-                # Flush remaining thinking callback
-                if (
-                    on_thinking_cb
-                    and not _thinking_sent
-                    and state.thinking_text
-                    and len(state.thinking_text) >= _MIN_THINKING_LEN
-                ):
-                    on_thinking_cb(state.thinking_text.rstrip())
-                # Final scrolls to ensure last content is visible.
-                # Markdown layout is async — schedule multiple deferred
-                # scrolls so long content eventually scrolls into view.
-                self.call_after_refresh(
-                    lambda: container.scroll_end(animate=False),
-                )
-                for delay in (0.3, 0.8):
-                    self.set_timer(
-                        delay,
-                        lambda: self.call_after_refresh(
-                            lambda: container.scroll_end(animate=False),
-                        ),
-                    )
+                # HITL: if interrupt was handled, loop back to resume stream
+                if state.pending_interrupt is None:
+                    break  # normal completion or rejection — exit HITL loop
+                # Otherwise _stream_input was set to Command(resume=...)
+                # by the interrupt handler above; loop continues.
 
             return response
 
@@ -972,6 +1070,14 @@ def run_textual_interactive(
                         "Media",
                     )
 
+            def _channel_hitl_prompt(action_requests: list) -> list[dict] | None:
+                """Send HITL approval prompt to channel user and wait for reply.
+
+                This runs in a thread (called via asyncio.to_thread) so it can
+                block without freezing the Textual event loop.
+                """
+                return _ch_mod.channel_hitl_prompt(action_requests, msg)
+
             response = ""
             try:
                 response = await self._stream_with_widgets(
@@ -980,6 +1086,7 @@ def run_textual_interactive(
                     on_todo_cb=_send_todo,
                     on_media_cb=_send_media,
                     skip_user_message=True,
+                    channel_hitl_fn=_channel_hitl_prompt,
                 )
             except Exception as exc:
                 response = f"Error: {exc}"
@@ -1063,12 +1170,26 @@ def run_textual_interactive(
 
         def action_cancel_queued(self) -> None:
             """Cancel the last queued message on Esc."""
+            # Delegate to ApprovalWidget if it has focus
+            focused = self.focused
+            if focused is not None:
+                from .widgets.approval_widget import ApprovalWidget
+                if isinstance(focused, ApprovalWidget):
+                    focused.action_select_reject()
+                    return
             if self._queued_messages:
                 self._queued_messages.pop()
                 self._render_queue_indicator()
 
         def action_edit_queued(self) -> None:
             """Pop the last queued message back into input for editing."""
+            # Skip if an ApprovalWidget has focus — let it handle up/down
+            focused = self.focused
+            if focused is not None:
+                from .widgets.approval_widget import ApprovalWidget
+                if isinstance(focused, ApprovalWidget):
+                    focused.action_move_up()
+                    return
             if self._queued_messages:
                 last = self._queued_messages.pop()
                 prompt = self.query_one("#prompt", Input)

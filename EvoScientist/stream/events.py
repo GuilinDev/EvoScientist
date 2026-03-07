@@ -65,7 +65,7 @@ def _extract_tool_content(msg) -> tuple[str, bool]:
 
 async def stream_agent_events(
     agent: Any,
-    message: str,
+    message: Any,
     thread_id: str,
     metadata: dict | None = None,
     media: list[str] | None = None,
@@ -253,45 +253,51 @@ async def stream_agent_events(
         # 4) No real names available yet -- return generic WITHOUT caching
         return "sub-agent"
 
-    # Build user message content: text + inline images + file path references
-    user_content: str | list[dict[str, Any]] = message
-    if media:
-        _IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
-        _MAX_INLINE_SIZE = 5 * 1024 * 1024  # 5 MB
-        content_blocks: list[dict[str, Any]] = []
-        if message:
-            content_blocks.append({"type": "text", "text": message})
-        def _read_file_b64(path: str) -> str:
-            with open(path, "rb") as fh:
-                return base64.b64encode(fh.read()).decode("ascii")
+    # Build input for agent.astream()
+    if isinstance(message, str):
+        # Build user message content: text + inline images + file path references
+        user_content: str | list[dict[str, Any]] = message
+        if media:
+            _IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
+            _MAX_INLINE_SIZE = 5 * 1024 * 1024  # 5 MB
+            content_blocks: list[dict[str, Any]] = []
+            if message:
+                content_blocks.append({"type": "text", "text": message})
+            def _read_file_b64(path: str) -> str:
+                with open(path, "rb") as fh:
+                    return base64.b64encode(fh.read()).decode("ascii")
 
-        file_refs: list[str] = []
-        for path in media:
-            ext = os.path.splitext(path)[1].lower()
-            is_image = ext in _IMAGE_EXTS and await asyncio.to_thread(os.path.isfile, path)
-            if is_image:
-                fsize = await asyncio.to_thread(os.path.getsize, path)
-                if fsize <= _MAX_INLINE_SIZE:
-                    mime = mimetypes.guess_type(path)[0] or "image/png"
-                    b64 = await asyncio.to_thread(_read_file_b64, path)
-                    content_blocks.append({"type": "image_url", "image_url": {
-                        "url": f"data:{mime};base64,{b64}",
-                    }})
+            file_refs: list[str] = []
+            for path in media:
+                ext = os.path.splitext(path)[1].lower()
+                is_image = ext in _IMAGE_EXTS and await asyncio.to_thread(os.path.isfile, path)
+                if is_image:
+                    fsize = await asyncio.to_thread(os.path.getsize, path)
+                    if fsize <= _MAX_INLINE_SIZE:
+                        mime = mimetypes.guess_type(path)[0] or "image/png"
+                        b64 = await asyncio.to_thread(_read_file_b64, path)
+                        content_blocks.append({"type": "image_url", "image_url": {
+                            "url": f"data:{mime};base64,{b64}",
+                        }})
+                    else:
+                        file_refs.append(path)
                 else:
                     file_refs.append(path)
-            else:
-                file_refs.append(path)
-        if file_refs:
-            ref_text = "\n".join(
-                f"[attached file: {os.path.basename(p)}] path: {p}" for p in file_refs
-            )
-            content_blocks.append({"type": "text", "text": ref_text})
-        if content_blocks:
-            user_content = content_blocks
+            if file_refs:
+                ref_text = "\n".join(
+                    f"[attached file: {os.path.basename(p)}] path: {p}" for p in file_refs
+                )
+                content_blocks.append({"type": "text", "text": ref_text})
+            if content_blocks:
+                user_content = content_blocks
+        astream_input: Any = {"messages": [{"role": "user", "content": user_content}]}
+    else:
+        # HITL resume: Command object passed directly to agent
+        astream_input = message
 
     try:
         async for chunk in agent.astream(
-            {"messages": [{"role": "user", "content": user_content}]},
+            astream_input,
             config=config,
             stream_mode=["messages", "updates"],
             subgraphs=True,
@@ -320,8 +326,24 @@ async def stream_agent_events(
             else:
                 continue
 
-            # Skip non-messages modes (updates, etc.)
+            # Parse HITL interrupts from updates mode
             if mode_str == "updates":
+                if isinstance(data, dict) and "__interrupt__" in data:
+                    for interrupt_obj in data["__interrupt__"]:
+                        if isinstance(interrupt_obj, dict):
+                            interrupt_value = interrupt_obj.get("value", {})
+                        else:
+                            interrupt_value = getattr(interrupt_obj, "value", {})
+                        if isinstance(interrupt_value, dict):
+                            action_reqs = interrupt_value.get("action_requests", [])
+                            review_cfgs = interrupt_value.get("review_configs", [])
+                        else:
+                            action_reqs = getattr(interrupt_value, "action_requests", [])
+                            review_cfgs = getattr(interrupt_value, "review_configs", [])
+                        if action_reqs:
+                            ns_parts = interrupt_obj.get("ns", [""]) if isinstance(interrupt_obj, dict) else getattr(interrupt_obj, "ns", [""])
+                            interrupt_id = str(ns_parts[0]) if ns_parts else "default"
+                            yield emitter.interrupt(interrupt_id, action_reqs, review_cfgs).data
                 continue
             if mode_str != "messages":
                 continue

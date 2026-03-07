@@ -26,6 +26,8 @@ T = TypeVar("T")
 
 _MAX_CHAT_LOCKS = 10_000
 _MAX_SESSIONS = 10_000
+_MAX_HITL_ROUNDS = 50
+_HITL_APPROVAL_TIMEOUT = 120.0  # seconds to wait for user reply
 
 
 @dataclass
@@ -70,6 +72,85 @@ def _format_todo_list(todos: list[dict]) -> str:
         lines.append(f"{i}. {content}")
     lines.append(f"\n\U0001f680 {len(todos)} tasks")  # 🚀
     return "\n".join(lines)
+
+
+def _should_auto_approve(action_requests: list[dict]) -> bool:
+    """Check if all action requests can be auto-approved via config.
+
+    Returns True if no manual approval is needed (config auto_approve,
+    non-execute tools, or shell_allow_list match).
+    """
+    if not action_requests:
+        return True
+
+    try:
+        from ..config.settings import load_config
+        cfg = load_config()
+    except Exception:
+        return False  # fail-closed
+
+    if cfg.auto_approve:
+        return True
+
+    shell_allow_list = (
+        [s.strip() for s in cfg.shell_allow_list.split(",") if s.strip()]
+        if cfg.shell_allow_list else []
+    )
+
+    for req in action_requests:
+        name = req.get("name", "") if isinstance(req, dict) else getattr(req, "name", "")
+        if name != "execute":
+            continue
+        args = req.get("args", {}) if isinstance(req, dict) else getattr(req, "args", {})
+        command = args.get("command", "") if isinstance(args, dict) else ""
+        cmd = command.strip()
+        if not any(cmd.startswith(prefix) for prefix in shell_allow_list):
+            return False
+    return True
+
+
+def _format_approval_prompt(action_requests: list[dict]) -> str:
+    """Format an approval prompt as a text message for channel users."""
+    lines = ["\u26a0\ufe0f Approval Required\n"]
+    for i, req in enumerate(action_requests, 1):
+        name = req.get("name", "") if isinstance(req, dict) else getattr(req, "name", "")
+        args = req.get("args", {}) if isinstance(req, dict) else getattr(req, "args", {})
+        if isinstance(args, dict):
+            command = args.get("command", args.get("path", ""))
+        else:
+            command = ""
+        if command:
+            lines.append(f"  {i}. {name}: {command}")
+        else:
+            lines.append(f"  {i}. {name}")
+    lines.append("")
+    lines.append("Reply: 1=Approve, 2=Reject, 3=Approve all")
+    lines.append("(Auto-reject in 2 min if no reply)")
+    return "\n".join(lines)
+
+
+def _parse_approval_reply(text: str) -> str | None:
+    """Parse a channel user's reply as an approval decision.
+
+    Returns "approve", "reject", "auto", or None if not recognized.
+    """
+    t = text.strip().lower()
+    if t in ("1", "y", "yes", "approve", "ok"):
+        return "approve"
+    if t in ("2", "n", "no", "reject"):
+        return "reject"
+    if t in ("3", "a", "auto", "approve all"):
+        return "auto"
+    return None
+
+
+@dataclass
+class _PendingInterrupt:
+    """Stored state for a pending HITL interrupt awaiting channel user reply."""
+    thread_id: str
+    action_requests: list
+    event: asyncio.Event  # set when user replies
+    decision: str | None = None  # "approve", "reject", "auto"
 
 
 class InboundConsumer:
@@ -151,6 +232,10 @@ class InboundConsumer:
 
         # Metrics
         self._metrics = ConsumerMetrics()
+
+        # HITL: pending interrupts per session_key, and auto-approve sessions
+        self._pending_interrupts: dict[str, _PendingInterrupt] = {}
+        self._auto_approve_sessions: set[str] = set()
 
     def _get_thread_id(self, sender_id: str) -> str:
         """Get or create a thread ID for the given sender.
@@ -254,8 +339,6 @@ class InboundConsumer:
 
     async def _handle_message(self, msg: InboundMessage) -> None:
         """Process a single inbound message."""
-        from ..stream.events import stream_agent_events
-
         if self._on_message_received:
             try:
                 self._on_message_received(msg)
@@ -274,18 +357,50 @@ class InboundConsumer:
 
         self._metrics.total_processed += 1
 
+        # HITL: check if this message is a reply to a pending approval
+        if session_key in self._pending_interrupts:
+            pending = self._pending_interrupts[session_key]
+            decision = _parse_approval_reply(msg.content)
+            if decision is not None:
+                pending.decision = decision
+                pending.event.set()
+                return  # don't process as a new agent message
+            # Unrecognized reply — treat as new message, cancel pending
+            pending.decision = "reject"
+            pending.event.set()
+            del self._pending_interrupts[session_key]
+
         async with self._chat_locks[session_key]:
-            try:
+            await self._stream_with_hitl(msg, channel, thread_id, session_key)
+
+    async def _stream_with_hitl(
+        self,
+        msg: InboundMessage,
+        channel: Channel | None,
+        thread_id: str,
+        session_key: str,
+    ) -> None:
+        """Stream agent events with HITL interrupt handling."""
+        from ..stream.events import stream_agent_events
+
+        stream_input: Any = msg.content
+
+        try:
+            if channel:
+                await channel.start_typing(msg.chat_id)
+
+            for _hitl_round in range(_MAX_HITL_ROUNDS):
                 final_content = ""
                 thinking_buffer: list[str] = []
                 todo_sent = False
                 thinking_sent = False
-
-                if channel:
-                    await channel.start_typing(msg.chat_id)
+                interrupt_data: dict | None = None
 
                 async for event in _timeout_aiter(
-                    stream_agent_events(self.agent, msg.content, thread_id, media=msg.media or None),
+                    stream_agent_events(
+                        self.agent, stream_input, thread_id,
+                        media=msg.media or None if isinstance(stream_input, str) else None,
+                    ),
                     self._inference_timeout,
                 ):
                     event_type = event.get("type")
@@ -328,6 +443,11 @@ class InboundConsumer:
                     elif event_type == "done":
                         final_content = event.get("content", "") or final_content
 
+                    elif event_type == "interrupt":
+                        interrupt_data = event
+                        break  # exit async for to handle interrupt
+
+                # Flush thinking
                 if thinking_buffer and not thinking_sent and channel:
                     full_thinking = "".join(thinking_buffer)
                     if full_thinking:
@@ -335,48 +455,111 @@ class InboundConsumer:
                             msg.sender_id, full_thinking, msg.metadata,
                         )
 
-                outbound = OutboundMessage(
-                    channel=msg.channel,
-                    chat_id=msg.chat_id,
-                    content=final_content or "No response",
-                    reply_to=msg.message_id or None,
-                    metadata=msg.metadata,
-                )
-                await self.bus.publish_outbound(outbound)
+                # No interrupt — normal completion
+                if interrupt_data is None:
+                    outbound = OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content=final_content or "No response",
+                        reply_to=msg.message_id or None,
+                        metadata=msg.metadata,
+                    )
+                    await self.bus.publish_outbound(outbound)
+                    self._metrics.total_successes += 1
+                    if self._on_message_sent:
+                        try:
+                            self._on_message_sent(outbound)
+                        except Exception:
+                            pass
+                    return  # done
 
-                self._metrics.total_successes += 1
+                # HITL: resolve the interrupt
+                action_reqs = interrupt_data.get("action_requests", [])
+                n = len(action_reqs) or 1
 
-                if self._on_message_sent:
-                    try:
-                        self._on_message_sent(outbound)
-                    except Exception:
-                        pass
+                # Session auto-approve (user previously chose "Approve all")
+                if session_key in self._auto_approve_sessions:
+                    from langgraph.types import Command  # type: ignore[import-untyped]
+                    stream_input = Command(resume={"decisions": [{"type": "approve"} for _ in range(n)]})
+                    continue
 
-            except asyncio.TimeoutError:
-                self._metrics.total_timeouts += 1
-                logger.error(
-                    f"Inference timeout ({self._inference_timeout}s idle) "
-                    f"for {msg.sender_id} in {session_key}"
-                )
+                # Config auto-approve (auto_approve, non-execute, allow_list)
+                if _should_auto_approve(action_reqs):
+                    from langgraph.types import Command  # type: ignore[import-untyped]
+                    stream_input = Command(resume={"decisions": [{"type": "approve"} for _ in range(n)]})
+                    continue
+
+                # Needs user approval — send prompt to channel
+                prompt_text = _format_approval_prompt(action_reqs)
                 await self.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel,
                     chat_id=msg.chat_id,
-                    content="Sorry, the response timed out. Please try again.",
+                    content=prompt_text,
                     metadata=msg.metadata,
                 ))
 
-            except Exception as e:
-                self._metrics.total_failures += 1
-                logger.error(f"Agent error: {e}")
-                await self.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel,
-                    chat_id=msg.chat_id,
-                    content="Sorry, something went wrong. Please try again later.",
-                    metadata=msg.metadata,
-                ))
-            finally:
-                if channel:
-                    await channel.stop_typing(msg.chat_id)
+                # Wait for user reply
+                pending = _PendingInterrupt(
+                    thread_id=thread_id,
+                    action_requests=action_reqs,
+                    event=asyncio.Event(),
+                )
+                self._pending_interrupts[session_key] = pending
+
+                try:
+                    await asyncio.wait_for(
+                        pending.event.wait(),
+                        timeout=_HITL_APPROVAL_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    # Auto-approve on timeout
+                    pending.decision = "approve"
+                finally:
+                    self._pending_interrupts.pop(session_key, None)
+
+                decision = pending.decision or "approve"
+
+                if decision == "reject":
+                    await self.bus.publish_outbound(OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content="Tool execution rejected.",
+                        metadata=msg.metadata,
+                    ))
+                    return
+
+                if decision == "auto":
+                    self._auto_approve_sessions.add(session_key)
+
+                from langgraph.types import Command  # type: ignore[import-untyped]
+                stream_input = Command(resume={"decisions": [{"type": "approve"} for _ in range(n)]})
+                # continue to next HITL round
+
+        except asyncio.TimeoutError:
+            self._metrics.total_timeouts += 1
+            logger.error(
+                f"Inference timeout ({self._inference_timeout}s idle) "
+                f"for {msg.sender_id} in {session_key}"
+            )
+            await self.bus.publish_outbound(OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="Sorry, the response timed out. Please try again.",
+                metadata=msg.metadata,
+            ))
+
+        except Exception as e:
+            self._metrics.total_failures += 1
+            logger.error(f"Agent error: {e}")
+            await self.bus.publish_outbound(OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="Sorry, something went wrong. Please try again later.",
+                metadata=msg.metadata,
+            ))
+        finally:
+            if channel:
+                await channel.stop_typing(msg.chat_id)
 
     # ── observability ──
 

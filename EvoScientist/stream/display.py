@@ -6,6 +6,7 @@ Also provides the shared console and formatter globals.
 """
 
 import asyncio
+import logging
 import os
 import sys
 from typing import Any, Callable
@@ -676,6 +677,123 @@ def display_final_results(
 
 
 # ---------------------------------------------------------------------------
+# HITL (Human-in-the-Loop) approval helpers
+# ---------------------------------------------------------------------------
+
+_logger = logging.getLogger(__name__)
+_MAX_HITL_ITERATIONS = 50
+_session_auto_approve = False
+
+
+def _matches_shell_allow_list(command: str, allow_list: list[str]) -> bool:
+    """Check if a shell command matches any prefix in the allow list."""
+    cmd = command.strip()
+    return any(cmd.startswith(prefix) for prefix in allow_list)
+
+
+def _resolve_hitl_approval(
+    interrupt_data: dict,
+    prompt_fn: Callable[[list], list[dict] | None] | None = None,
+) -> list[dict] | None:
+    """Resolve HITL approval for an interrupt.
+
+    Returns list of decisions if approved, None if rejected.
+    Auto-approves based on config and session state.
+
+    Args:
+        interrupt_data: The interrupt event data.
+        prompt_fn: Optional custom prompt function (e.g. channel-based).
+            If provided and manual approval is needed, this is called
+            instead of the default CLI ``input()`` prompt.
+    """
+    global _session_auto_approve
+
+    action_requests = interrupt_data.get("action_requests", [])
+    if not action_requests:
+        return [{"type": "approve"}]
+
+    # Session-level auto-approve (user chose "Approve all" earlier)
+    if _session_auto_approve:
+        return [{"type": "approve"} for _ in action_requests]
+
+    # Config-level auto-approve
+    from ..config.settings import load_config
+    cfg = load_config()
+    if cfg.auto_approve:
+        return [{"type": "approve"} for _ in action_requests]
+
+    # Per-tool auto-approval: only execute needs manual approval
+    shell_allow_list = (
+        [s.strip() for s in cfg.shell_allow_list.split(",") if s.strip()]
+        if cfg.shell_allow_list else []
+    )
+
+    needs_prompt = False
+    for req in action_requests:
+        name = req.get("name", "") if isinstance(req, dict) else getattr(req, "name", "")
+        args = req.get("args", {}) if isinstance(req, dict) else getattr(req, "args", {})
+
+        if name != "execute":
+            continue  # Non-execute tools auto-approve
+
+        command = args.get("command", "") if isinstance(args, dict) else ""
+        if not _matches_shell_allow_list(command, shell_allow_list):
+            needs_prompt = True
+            break
+
+    if not needs_prompt:
+        return [{"type": "approve"} for _ in action_requests]
+
+    # Use custom prompt function if provided (e.g. channel-based approval)
+    if prompt_fn is not None:
+        return prompt_fn(action_requests)
+
+    return _prompt_hitl_approval(action_requests)
+
+
+def _prompt_hitl_approval(action_requests: list) -> list[dict] | None:
+    """Display approval prompt and get user decision.
+
+    Returns list of decisions if approved, None if rejected.
+    """
+    global _session_auto_approve
+
+    console.print()
+    panel_text = Text()
+    for i, req in enumerate(action_requests):
+        name = req.get("name", "") if isinstance(req, dict) else getattr(req, "name", "")
+        args = req.get("args", {}) if isinstance(req, dict) else getattr(req, "args", {})
+        desc = format_tool_compact(name, args if isinstance(args, dict) else {})
+        if panel_text.plain:
+            panel_text.append("\n")
+        panel_text.append(f"  {i + 1}. {desc}", style="yellow")
+    panel_text.append("\n\n")
+    panel_text.append("  [1] Approve  [2] Reject  [3] Approve all (session)", style="dim")
+
+    console.print(Panel(
+        panel_text,
+        title="Approval Required",
+        border_style="yellow",
+        padding=(0, 1),
+    ))
+
+    try:
+        choice = input("  Choose [1/2/3, Enter=Approve]: ").strip() or "1"
+    except (EOFError, KeyboardInterrupt):
+        console.print("[dim]  Rejected.[/dim]")
+        return None
+
+    if choice == "1":
+        return [{"type": "approve"} for _ in action_requests]
+    elif choice == "3":
+        _session_auto_approve = True
+        return [{"type": "approve"} for _ in action_requests]
+    else:
+        console.print("[dim]  Rejected.[/dim]")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Async-to-sync bridge
 # ---------------------------------------------------------------------------
 
@@ -704,7 +822,7 @@ def _get_event_loop() -> asyncio.AbstractEventLoop:
 
 def _run_streaming(
     agent: Any,
-    message: str,
+    message: Any,
     thread_id: str,
     show_thinking: bool,
     interactive: bool,
@@ -712,6 +830,11 @@ def _run_streaming(
     on_todo: Callable[[list[dict]], None] | None = None,
     on_file_write: Callable[[str], None] | None = None,
     metadata: dict | None = None,
+    hitl_prompt_fn: Callable[[list], list[dict] | None] | None = None,
+    *,
+    _state: StreamState | None = None,
+    _hitl_depth: int = 0,
+    _media_sent: set[str] | None = None,
 ) -> str:
     """Run async streaming and render with Rich Live display.
 
@@ -739,10 +862,11 @@ def _run_streaming(
     import nest_asyncio
     nest_asyncio.apply()
 
-    state = StreamState()
+    state = _state if _state is not None else StreamState()
     _thinking_sent = False
     _todo_sent = False
-    _media_sent: set[str] = set()  # track sent media paths to avoid duplicates
+    if _media_sent is None:
+        _media_sent = set()
     _MIN_THINKING_LEN = 200
 
     async def _consume() -> None:
@@ -847,7 +971,15 @@ def _run_streaming(
                 except asyncio.CancelledError:
                     pass
                 # Render clean final frame before Live exits (no spinners, expanded tools)
-                if interactive:
+                if state.pending_interrupt is not None:
+                    # Interrupted: render current state (not final) so it
+                    # looks continuous when approval prompt appears.
+                    final_display = create_streaming_display(
+                        **state.get_display_args(),
+                        show_thinking=show_thinking,
+                        response_markdown=state.get_response_markdown(),
+                    )
+                elif interactive:
                     final_display = create_streaming_display(
                         **state.get_display_args(),
                         show_thinking=show_thinking,
@@ -873,6 +1005,35 @@ def _run_streaming(
     if on_thinking and not _thinking_sent and state.thinking_text:
         if len(state.thinking_text) >= _MIN_THINKING_LEN:
             on_thinking(state.thinking_text.rstrip())
+
+    # HITL: check for pending interrupt and handle approval
+    if state.pending_interrupt is not None and _hitl_depth < _MAX_HITL_ITERATIONS:
+        decisions = _resolve_hitl_approval(
+            state.pending_interrupt, prompt_fn=hitl_prompt_fn,
+        )
+        if decisions is not None:
+            from langgraph.types import Command  # type: ignore[import-untyped]
+            state.pending_interrupt = None
+            return _run_streaming(
+                agent=agent,
+                message=Command(resume={"decisions": decisions}),
+                thread_id=thread_id,
+                show_thinking=show_thinking,
+                interactive=interactive,
+                on_thinking=on_thinking,
+                on_todo=on_todo,
+                on_file_write=on_file_write,
+                metadata=metadata,
+                hitl_prompt_fn=hitl_prompt_fn,
+                _state=state,
+                _hitl_depth=_hitl_depth + 1,
+                _media_sent=_media_sent,
+            )
+    elif state.pending_interrupt is not None:
+        _logger.warning(
+            "HITL loop reached max iterations (%d), stopping",
+            _MAX_HITL_ITERATIONS,
+        )
 
     # Everything (tools, thinking, todos, response) is already on screen
     # from Live's final frame (transient=False). No need to re-print.

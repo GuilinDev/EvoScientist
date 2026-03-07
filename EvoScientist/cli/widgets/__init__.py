@@ -9,6 +9,7 @@ from .todo_widget import TodoWidget
 from .user_message import UserMessage
 from .system_message import SystemMessage
 from .usage_widget import UsageWidget
+from .approval_widget import ApprovalWidget
 
 __all__ = [
     "LoadingWidget",
@@ -20,4 +21,5 @@ __all__ = [
     "UserMessage",
     "SystemMessage",
     "UsageWidget",
+    "ApprovalWidget",
 ]

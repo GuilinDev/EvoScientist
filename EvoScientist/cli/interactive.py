@@ -519,6 +519,10 @@ def cmd_interactive(
                             "Media", timeout=30,
                         )
 
+                def _channel_hitl_prompt(action_requests: list) -> list[dict] | None:
+                    """Send HITL approval prompt to channel user and wait for reply."""
+                    return _ch_mod.channel_hitl_prompt(action_requests, msg)
+
                 meta = build_metadata(state["workspace_dir"], model)
                 try:
                     response = run_streaming(
@@ -532,6 +536,7 @@ def cmd_interactive(
                         on_thinking=_send_thinking_to_channel,
                         on_todo=_send_todo_to_channel,
                         on_file_write=_send_media_to_channel,
+                        hitl_prompt_fn=_channel_hitl_prompt,
                     )
                 except Exception as e:
                     response = f"Error: {e}"

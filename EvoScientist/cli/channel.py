@@ -80,6 +80,123 @@ def _pop_channel_response(msg_id: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# HITL approval intercept: bus thread ⇄ main CLI thread
+# ---------------------------------------------------------------------------
+# When the main thread needs HITL approval from a channel user, it registers
+# a pending HITL wait for (channel, chat_id).  The bus consumer checks this
+# BEFORE normal enqueue, so the next reply from that user is intercepted.
+
+_pending_hitl: dict[str, dict] = {}  # "channel:chat_id" -> {event, reply}
+_hitl_lock = threading.Lock()
+_hitl_auto_approve: set[str] = set()  # "channel:chat_id" keys with auto-approve
+
+_HITL_APPROVAL_TIMEOUT = 120.0  # seconds to wait for channel user reply
+
+
+def _register_hitl_wait(channel_type: str, chat_id: str) -> threading.Event:
+    """Register a pending HITL wait.  Returns a threading.Event to block on."""
+    key = f"{channel_type}:{chat_id}"
+    event = threading.Event()
+    with _hitl_lock:
+        _pending_hitl[key] = {"event": event, "reply": None}
+    return event
+
+
+def _pop_hitl_reply(channel_type: str, chat_id: str) -> str | None:
+    """Pop and return the HITL reply (or None if not set)."""
+    key = f"{channel_type}:{chat_id}"
+    with _hitl_lock:
+        slot = _pending_hitl.pop(key, None)
+    return slot["reply"] if slot else None
+
+
+def _try_set_hitl_reply(channel_type: str, chat_id: str, content: str) -> bool:
+    """Try to intercept a message as a HITL reply.  Returns True if consumed."""
+    key = f"{channel_type}:{chat_id}"
+    with _hitl_lock:
+        slot = _pending_hitl.get(key)
+        if slot:
+            slot["reply"] = content
+            slot["event"].set()
+            return True
+    return False
+
+
+def channel_hitl_prompt(
+    action_requests: list,
+    msg: "ChannelMessage",
+) -> list[dict] | None:
+    """Send HITL approval prompt to channel user and wait for reply.
+
+    Blocking function — uses threading.Event.wait().  Safe to call from a
+    background thread (CLI channel processing or asyncio.to_thread in TUI).
+
+    Returns approval decisions list on approve/auto, or None on reject/timeout.
+    """
+    from ..channels.consumer import (
+        _format_approval_prompt,
+        _parse_approval_reply,
+    )
+    from ..channels.bus.events import OutboundMessage
+
+    # Check session auto-approve (set by a previous "3" reply)
+    session_key = f"{msg.channel_type}:{msg.chat_id}"
+    if session_key in _hitl_auto_approve:
+        return [{"type": "approve"} for _ in action_requests]
+
+    bus_loop = _bus_loop
+    if not (bus_loop and msg.bus_ref):
+        _channel_logger.debug("HITL: no bus_loop or bus_ref, rejecting")
+        return None
+
+    def _send(content: str) -> bool:
+        """Send a message to the channel user.  Returns True on success."""
+        try:
+            asyncio.run_coroutine_threadsafe(
+                msg.bus_ref.publish_outbound(OutboundMessage(
+                    channel=msg.channel_type,
+                    chat_id=msg.chat_id,
+                    content=content,
+                    metadata=msg.metadata,
+                )),
+                bus_loop,
+            ).result(timeout=15)
+            return True
+        except Exception as exc:
+            _channel_logger.debug("HITL send failed: %s", exc)
+            return False
+
+    # 1. Send approval prompt
+    prompt_text = _format_approval_prompt(action_requests)
+    if not _send(prompt_text):
+        return None
+
+    # 2. Wait for channel user's reply
+    hitl_event = _register_hitl_wait(msg.channel_type, msg.chat_id)
+    replied = hitl_event.wait(timeout=_HITL_APPROVAL_TIMEOUT)
+    reply_text = _pop_hitl_reply(msg.channel_type, msg.chat_id)
+
+    if not replied or not reply_text:
+        _send("\u23f0 Approval timed out. Action rejected.")
+        return None
+
+    # 3. Parse decision
+    decision = _parse_approval_reply(reply_text)
+    if decision == "auto":
+        _hitl_auto_approve.add(session_key)
+        return [{"type": "approve"} for _ in action_requests]
+    if decision == "approve":
+        return [{"type": "approve"} for _ in action_requests]
+
+    feedback = (
+        "Action rejected." if decision == "reject"
+        else "Unrecognized reply. Action rejected."
+    )
+    _send(feedback)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Module-level channel state (bus mode)
 # ---------------------------------------------------------------------------
 
@@ -242,12 +359,9 @@ def _add_channel_to_running_bus(
 async def _bus_inbound_consumer(bus, manager) -> None:
     """Consume inbound messages from bus and bridge to the main CLI thread.
 
-    This does NOT invoke the agent.  It enqueues a ``ChannelMessage`` on
-    the thread-safe queue and waits for the main thread to set a response.
-    Once the response arrives it publishes the outbound message on the bus.
+    Task-based: each inbound message is handled in its own asyncio task
+    so the consumer loop stays responsive for HITL approval replies.
     """
-    from ..channels.bus.events import OutboundMessage
-
     while True:
         try:
             msg = await asyncio.wait_for(bus.consume_inbound(), timeout=1.0)
@@ -256,54 +370,70 @@ async def _bus_inbound_consumer(bus, manager) -> None:
         except asyncio.CancelledError:
             break
 
-        _channel_logger.info(
-            f"[bus] Received from {msg.channel}:{msg.sender_id}: "
-            f"{msg.content[:60]}..."
-        )
-        manager.record_message(msg.channel, "received")
-
-        channel = manager.get_channel(msg.channel)
-        if channel:
-            await channel.start_typing(msg.chat_id)
-
-        # Enqueue for main CLI thread to process with its own event loop
-        cm = ChannelMessage(
-            msg_id=str(uuid.uuid4()),
-            content=msg.content,
-            sender=msg.sender_id,
-            channel_type=msg.channel,
-            metadata=msg.metadata,
-            channel_ref=channel,
-            bus_ref=bus,
-            chat_id=msg.chat_id,
-            message_id=msg.message_id,
-        )
-        event = _enqueue_channel_message(cm)
-
-        # Wait (non-blocking for asyncio) until main thread sets response
-        _RESPONSE_TIMEOUT = 600  # 10 minutes max per message
-        replied = await asyncio.to_thread(event.wait, _RESPONSE_TIMEOUT)
-        if not replied:
-            _channel_logger.warning(
-                f"[bus] Response timeout ({_RESPONSE_TIMEOUT}s) for {cm.msg_id}"
+        # Check if this message is a HITL approval reply
+        if _try_set_hitl_reply(msg.channel, msg.chat_id, msg.content):
+            _channel_logger.info(
+                f"[bus] HITL reply from {msg.channel}:{msg.sender_id}: "
+                f"{msg.content[:60]}"
             )
-        response = _pop_channel_response(cm.msg_id) or "No response"
+            continue
 
-        # Publish the response back through the bus → channel
-        try:
-            await bus.publish_outbound(OutboundMessage(
-                channel=msg.channel,
-                chat_id=msg.chat_id,
-                content=response,
-                reply_to=msg.message_id or None,
-                metadata=msg.metadata,
-            ))
-            manager.record_message(msg.channel, "sent")
-        except Exception as e:
-            _channel_logger.error(f"[bus] Outbound error: {e}")
-        finally:
-            if channel:
-                await channel.stop_typing(msg.chat_id)
+        # Regular message — handle in a separate task
+        asyncio.create_task(_handle_bus_message(bus, manager, msg))
+
+
+async def _handle_bus_message(bus, manager, msg) -> None:
+    """Handle a single inbound bus message (runs as an independent task)."""
+    from ..channels.bus.events import OutboundMessage
+
+    _channel_logger.info(
+        f"[bus] Received from {msg.channel}:{msg.sender_id}: "
+        f"{msg.content[:60]}..."
+    )
+    manager.record_message(msg.channel, "received")
+
+    channel = manager.get_channel(msg.channel)
+    if channel:
+        await channel.start_typing(msg.chat_id)
+
+    # Enqueue for main CLI thread to process with its own event loop
+    cm = ChannelMessage(
+        msg_id=str(uuid.uuid4()),
+        content=msg.content,
+        sender=msg.sender_id,
+        channel_type=msg.channel,
+        metadata=msg.metadata,
+        channel_ref=channel,
+        bus_ref=bus,
+        chat_id=msg.chat_id,
+        message_id=msg.message_id,
+    )
+    event = _enqueue_channel_message(cm)
+
+    # Wait (non-blocking for asyncio) until main thread sets response
+    _RESPONSE_TIMEOUT = 600  # 10 minutes max per message
+    replied = await asyncio.to_thread(event.wait, _RESPONSE_TIMEOUT)
+    if not replied:
+        _channel_logger.warning(
+            f"[bus] Response timeout ({_RESPONSE_TIMEOUT}s) for {cm.msg_id}"
+        )
+    response = _pop_channel_response(cm.msg_id) or "No response"
+
+    # Publish the response back through the bus → channel
+    try:
+        await bus.publish_outbound(OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content=response,
+            reply_to=msg.message_id or None,
+            metadata=msg.metadata,
+        ))
+        manager.record_message(msg.channel, "sent")
+    except Exception as e:
+        _channel_logger.error(f"[bus] Outbound error: {e}")
+    finally:
+        if channel:
+            await channel.stop_typing(msg.chat_id)
 
 
 def _print_channel_panel(channels: list[tuple[str, bool, str]]) -> None:

@@ -70,6 +70,21 @@ class TestStreamEventEmitter:
         assert ev.type == "error"
         assert ev.data["message"] == "something broke"
 
+    def test_interrupt(self):
+        ev = StreamEventEmitter.interrupt(
+            "main",
+            [{"name": "execute", "args": {"command": "ls"}}],
+            [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
+        )
+        assert ev.type == "interrupt"
+        assert ev.data["interrupt_id"] == "main"
+        assert len(ev.data["action_requests"]) == 1
+        assert len(ev.data["review_configs"]) == 1
+
+    def test_interrupt_no_review_configs(self):
+        ev = StreamEventEmitter.interrupt("x", [{"name": "execute"}])
+        assert ev.data["review_configs"] == []
+
     def test_all_events_have_type_in_data(self):
         """Every event's data dict should contain a 'type' key matching the event type."""
         events = [
@@ -81,6 +96,7 @@ class TestStreamEventEmitter:
             StreamEventEmitter.subagent_tool_call("s", "t", {}),
             StreamEventEmitter.subagent_tool_result("s", "t", "x"),
             StreamEventEmitter.subagent_end("s"),
+            StreamEventEmitter.interrupt("i", []),
             StreamEventEmitter.done(),
             StreamEventEmitter.error("e"),
         ]
