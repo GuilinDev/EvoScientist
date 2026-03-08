@@ -207,7 +207,11 @@ def cmd_interactive(
     from .. import paths
     memory_dir = str(paths.MEMORY_DIR)
 
-    history_file = str(os.path.expanduser("~/.EvoScientist_history"))
+    from ..config.settings import get_config_dir
+
+    config_dir = get_config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
+    history_file = str(config_dir / "history")
     session = PromptSession(
         history=FileHistory(history_file),
         auto_suggest=AutoSuggestFromHistory(),
