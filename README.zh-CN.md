@@ -263,6 +263,21 @@ EvoSci config set shell_allow_list "python,pip,pytest,ruff,git"
 </details>
 
 <details>
+<summary>智能体提问（Ask User）</summary>
+
+智能体可以在需要澄清时主动向你提问（例如数据集选择、实验方向等）。此功能默认开启。关闭方式：
+
+```bash
+# 持久化：写入配置
+EvoSci config set enable_ask_user false
+
+# 重新开启
+EvoSci config set enable_ask_user true
+```
+
+</details>
+
+<details>
 <summary>会话内命令</summary>
 
 | 命令 | 说明 |

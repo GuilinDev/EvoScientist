@@ -252,6 +252,21 @@ During a session you can also reply **3** (Approve all) at any approval prompt t
 </details>
 
 <details>
+<summary>Agent Questions (Ask User)</summary>
+
+The agent can proactively ask you questions when it needs clarification (e.g., dataset choice, experiment direction). This is enabled by default. To disable:
+
+```bash
+# Persistent: set in config
+EvoSci config set enable_ask_user false
+
+# Re-enable
+EvoSci config set enable_ask_user true
+```
+
+</details>
+
+<details>
 <summary>In-session commands</summary>
 
 | Command | Description |
