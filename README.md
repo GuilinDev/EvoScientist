@@ -463,7 +463,9 @@ We welcome contributions from developers, researchers, and AI coding agents at a
 
 [![Star History Chart](https://api.star-history.com/svg?repos=EvoScientist/EvoScientist&type=date&legend=top-left)](https://www.star-history.com/#EvoScientist/EvoScientist&type=date&legend=top-left)
 
-### 📝 Citation
+<p align="right"><a href="#top">🔝Back to top</a></p>
+
+## 📝 Citation
 
 If you find our paper and code useful in your research and applications, please cite using this BibTeX:
 
