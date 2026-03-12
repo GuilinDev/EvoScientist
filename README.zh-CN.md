@@ -293,12 +293,18 @@ EvoSci config set enable_ask_user true
 
 | 命令 | 说明 |
 | ---- | ---- |
+| `/current` | 显示当前会话信息 |
+| `/threads` | 列出最近的会话 |
+| `/resume` | 恢复之前的会话 |
+| `/delete` | 删除已保存的会话 |
 | `/new` | 开始新会话 |
-| `/current` | 显示当前线程 ID 和工作区路径 |
-| `/channel` | 启动消息渠道 |
+| `/clear` | 清除聊天记录 |
 | `/skills` | 列出已安装的技能包 |
 | `/install-skill <src>` | 从本地路径或 GitHub 安装技能包 |
-| `/mcp` | 列出 MCP 服务器和工具路由 |
+| `/uninstall-skill <name>` | 卸载已安装的技能包 |
+| `/mcp` | 管理 MCP 服务器 |
+| `/channel` | 配置消息渠道 |
+| `/help` | 显示可用命令 |
 | `/exit` | 退出 |
 
 </details>

@@ -283,12 +283,18 @@ EvoSci config set enable_ask_user true
 
 | Command | Description |
 | ------- | ----------- |
+| `/current` | Show current session info |
+| `/threads` | List recent sessions |
+| `/resume` | Resume a previous session |
+| `/delete` | Delete a saved session |
 | `/new` | Start a new session |
-| `/current` | Show thread ID and workspace path |
-| `/channel` | Start a messaging channel |
+| `/clear` | Clear chat history |
 | `/skills` | List installed skills |
-| `/install-skill <src>` | Install skill from path or GitHub |
-| `/mcp` | List MCP servers and tool routing |
+| `/install-skill <src>` | Add a skill from path or GitHub |
+| `/uninstall-skill <name>` | Remove an installed skill |
+| `/mcp` | Manage MCP servers |
+| `/channel` | Configure messaging channels |
+| `/help` | Show available commands |
 | `/exit` | Quit |
 
 </details>
