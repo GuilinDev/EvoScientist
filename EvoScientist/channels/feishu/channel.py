@@ -282,7 +282,15 @@ class FeishuChannel(Channel, WebhookMixin, TokenMixin):
         }
         try:
             resp = await self._http_client.post(url, json=body)
-            data = resp.json()
+            try:
+                data = resp.json()
+            except json.JSONDecodeError:
+                body_preview = resp.text[:200] if resp.text else "(empty)"
+                raise ChannelError(
+                    f"Feishu auth: invalid JSON (HTTP {resp.status_code}): {body_preview}"
+                )
+        except ChannelError:
+            raise
         except Exception as e:
             raise ChannelError(f"Failed to get Feishu access token: {e}")
 
@@ -335,7 +343,15 @@ class FeishuChannel(Channel, WebhookMixin, TokenMixin):
         """POST to Feishu API and return True if code==0."""
         try:
             resp = await self._http_client.post(url, json=body, headers=headers)
-            return resp.json().get("code") == 0
+            try:
+                data = resp.json()
+            except json.JSONDecodeError:
+                body_preview = resp.text[:200] if resp.text else "(empty)"
+                logger.warning(
+                    f"Feishu send: invalid JSON (HTTP {resp.status_code}): {body_preview}"
+                )
+                return False
+            return data.get("code") == 0
         except Exception as e:
             logger.warning(f"Feishu send error: {e}")
             return False
@@ -469,7 +485,14 @@ class FeishuChannel(Channel, WebhookMixin, TokenMixin):
                 data=extra_data,
                 files={field_name: (Path(file_path).name, f)},
             )
-        data = resp.json()
+        try:
+            data = resp.json()
+        except json.JSONDecodeError:
+            body_preview = resp.text[:200] if resp.text else "(empty)"
+            logger.error(
+                f"Feishu upload: invalid JSON (HTTP {resp.status_code}): {body_preview}"
+            )
+            return None
         if data.get("code") != 0:
             logger.error(f"Feishu upload failed: {data.get('msg')}")
             return None

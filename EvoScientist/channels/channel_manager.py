@@ -524,11 +524,14 @@ class SharedWebhookServer:
     one server instead of letting each channel bind its own port.
     """
 
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, tunnel_type: str = "") -> None:
         self._port = port
+        self._tunnel_type = tunnel_type
         self._app: Any = None
         self._runner: Any = None
         self._site: Any = None
+        self._tunnel: Any = None  # CloudflareTunnel | None
+        self._tunnel_url: str | None = None
 
     async def start(self, routes: list[tuple[str, str, Any]]) -> None:
         from aiohttp import web
@@ -549,7 +552,26 @@ class SharedWebhookServer:
             f"with {len(routes)} route(s)"
         )
 
+        # Start tunnel if configured
+        if self._tunnel_type:
+            from .tunnel import create_tunnel, TunnelError
+
+            self._tunnel = create_tunnel(self._tunnel_type)
+            if self._tunnel is not None:
+                try:
+                    self._tunnel_url = await self._tunnel.start(self._port)
+                    logger.info(
+                        f"Shared webhook public URL: {self._tunnel_url}"
+                    )
+                except TunnelError as e:
+                    logger.error(f"Failed to start tunnel: {e}")
+                    self._tunnel = None
+
     async def stop(self) -> None:
+        if self._tunnel is not None:
+            await self._tunnel.stop()
+            self._tunnel = None
+            self._tunnel_url = None
         if self._site:
             await self._site.stop()
             self._site = None
@@ -575,6 +597,7 @@ class ChannelManager:
         health_port: int = 8080,
         drain_timeout: float = 30.0,
         shared_webhook_port: int = 0,
+        tunnel_type: str = "",
     ):
         self.bus = bus
         self._channels: dict[str, Channel] = {}
@@ -594,6 +617,7 @@ class ChannelManager:
         # Shared webhook
         self._shared_webhook_port = shared_webhook_port
         self._shared_webhook_server: SharedWebhookServer | None = None
+        self._tunnel_type = tunnel_type
 
     @classmethod
     def from_config(cls, config, bus: MessageBus | None = None) -> "ChannelManager":
@@ -612,7 +636,8 @@ class ChannelManager:
         if bus is None:
             bus = MessageBus()
         shared_webhook_port = getattr(config, "shared_webhook_port", 0) or 0
-        manager = cls(bus, shared_webhook_port=shared_webhook_port)
+        tunnel_type = getattr(config, "tunnel_type", "") or ""
+        manager = cls(bus, shared_webhook_port=shared_webhook_port, tunnel_type=tunnel_type)
         types = [
             t.strip() for t in (config.channel_enabled or "").split(",") if t.strip()
         ]
@@ -798,6 +823,7 @@ class ChannelManager:
 
         self._shared_webhook_server = SharedWebhookServer(
             self._shared_webhook_port,
+            tunnel_type=self._tunnel_type,
         )
         await self._shared_webhook_server.start(all_routes)
 

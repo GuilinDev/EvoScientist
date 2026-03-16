@@ -81,6 +81,8 @@ class WebhookMixin:
     _http_client: Any = None
     _runner: Any = None
     _site: Any = None
+    _tunnel: Any = None  # CloudflareTunnel | None
+    _tunnel_url: str | None = None
 
     def _get_webhook_port(self) -> int:
         return getattr(self.config, "webhook_port", 9000)
@@ -122,7 +124,27 @@ class WebhookMixin:
         await self._site.start()
         logger.info(f"{getattr(self, 'name', '?')} webhook on port {port}")
 
+        # Start tunnel if configured
+        tunnel_type = getattr(getattr(self, "config", None), "tunnel_type", "") or ""
+        if tunnel_type:
+            from .tunnel import create_tunnel, TunnelError
+
+            self._tunnel = create_tunnel(tunnel_type)
+            if self._tunnel is not None:
+                try:
+                    self._tunnel_url = await self._tunnel.start(port)
+                    logger.info(
+                        f"{getattr(self, 'name', '?')} public URL: {self._tunnel_url}"
+                    )
+                except TunnelError as e:
+                    logger.error(f"Failed to start tunnel: {e}")
+                    self._tunnel = None
+
     async def _stop_webhook_server(self) -> None:
+        if self._tunnel is not None:
+            await self._tunnel.stop()
+            self._tunnel = None
+            self._tunnel_url = None
         if self._site:
             await self._site.stop()
             self._site = None

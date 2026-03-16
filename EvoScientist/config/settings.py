@@ -182,6 +182,9 @@ class EvoScientistConfig:
     # Shared webhook port (0 = disabled)
     shared_webhook_port: int = 9000
 
+    # Tunnel for exposing webhook to public internet ("cloudflared" | "")
+    tunnel_type: str = ""
+
     # HITL (Human-in-the-Loop) Settings
     auto_approve: bool = False  # Auto-approve all tool executions without prompting
     shell_allow_list: str = ""  # Comma-separated shell command prefixes to auto-approve
