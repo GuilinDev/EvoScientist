@@ -271,6 +271,9 @@ EvoSci  # 或 EvoScientist — 交互模式（默认 TUI）
 
 ![cli help](https://raw.githubusercontent.com/EvoScientist/EvoScientist/main/.github/assets/EvoScientist_cli_help.png)
 
+> [!TIP]
+> 需要复制长输出？使用 `--ui cli` 切换到经典模式，即可使用终端原生复制。macOS [iTerm2](https://iterm2.com/) 用户也可以按住 `⌥ Option` 拖选文字，再 `⌘+C` 复制。
+
 <details>
 <summary>常用示例</summary>
 

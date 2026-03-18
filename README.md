@@ -262,6 +262,9 @@ EvoSci  # or EvoScientist — interactive mode (TUI by default)
 
 ![cli help](https://raw.githubusercontent.com/EvoScientist/EvoScientist/main/.github/assets/EvoScientist_cli_help.png)
 
+> [!TIP]
+> Need to copy long outputs? Use `--ui cli` for classic mode where native terminal copy works freely. On macOS, [iTerm2](https://iterm2.com/) users can also hold `⌥ Option` while dragging to select, then `⌘+C`.
+
 <details>
 <summary>Common examples</summary>
 
