@@ -31,6 +31,7 @@ class MCPCommand(Command):
             await self._mcp_remove(ctx, subargs[0] if subargs else "")
         elif subcmd == "install":
             from .mcp_install import InstallMCPCommand
+
             await InstallMCPCommand().execute(ctx, subargs)
         else:
             ctx.ui.append_system("MCP commands:", style="bold")
@@ -48,7 +49,9 @@ class MCPCommand(Command):
                 "  /mcp edit ...     Edit an existing server", style="dim"
             )
             ctx.ui.append_system("  /mcp remove ...   Remove a server", style="dim")
-            ctx.ui.append_system("  /mcp install ...  Browse and install servers", style="dim")
+            ctx.ui.append_system(
+                "  /mcp install ...  Browse and install servers", style="dim"
+            )
 
     async def _mcp_list(self, ctx: CommandContext) -> None:
         from ...mcp import load_mcp_config

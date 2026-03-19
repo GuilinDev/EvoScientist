@@ -1,20 +1,19 @@
 """Tests for EvoScientist onboarding wizard."""
 
 import subprocess
-from unittest.mock import patch, Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
+from EvoScientist.config import EvoScientistConfig
 from EvoScientist.config.onboard import (
-    IntegerValidator,
-    ChoiceValidator,
+    CONFIRM_STYLE,
     STEPS,
     WIZARD_STYLE,
-    CONFIRM_STYLE,
+    ChoiceValidator,
+    IntegerValidator,
     render_progress,
 )
-from EvoScientist.config import EvoScientistConfig
-
 
 # =============================================================================
 # Test STEPS and WIZARD_STYLE constants
@@ -526,7 +525,7 @@ class TestStepSkills:
 
     def test_installs_selected_skills(self):
         """Test skills step installs selected skills and returns sources."""
-        from EvoScientist.config.onboard import _step_skills, _RECOMMENDED_SKILLS
+        from EvoScientist.config.onboard import _RECOMMENDED_SKILLS, _step_skills
 
         source = _RECOMMENDED_SKILLS[0]["source"]
 
@@ -544,7 +543,7 @@ class TestStepSkills:
 
     def test_handles_install_failure(self):
         """Test skills step handles installation errors gracefully."""
-        from EvoScientist.config.onboard import _step_skills, _RECOMMENDED_SKILLS
+        from EvoScientist.config.onboard import _RECOMMENDED_SKILLS, _step_skills
 
         source = _RECOMMENDED_SKILLS[0]["source"]
 

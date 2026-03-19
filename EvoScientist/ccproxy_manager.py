@@ -56,8 +56,8 @@ def _is_editable_install() -> bool:
     project root can shadow the real ``dist-info`` in site-packages.
     """
     try:
-        import json
         import importlib.metadata as _meta
+        import json
 
         for dist in _meta.distributions():
             name = dist.metadata.get("Name", "")

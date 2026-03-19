@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.text import Text
-
 from textual.binding import Binding, BindingType
 from textual.containers import Container
 from textual.message import Message
@@ -121,7 +120,7 @@ class SkillBrowserWidget(Widget):
             for t in s.get("tags", []):
                 tag_counter[t.lower()] += 1
         sorted_tags = sorted(tag_counter.items(), key=lambda x: (-x[1], x[0]))
-        self._tag_items = [("all", len(self._index))] + sorted_tags
+        self._tag_items = [("all", len(self._index)), *sorted_tags]
 
         # If pre-filtered, skip to phase 2
         if self._pre_filter_tag:

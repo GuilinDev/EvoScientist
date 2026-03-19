@@ -14,19 +14,19 @@ from pathlib import Path
 import questionary
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.styles import Style
-from prompt_toolkit.validation import Validator, ValidationError
+from prompt_toolkit.validation import ValidationError, Validator
 from questionary import Choice
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
+from ..llm import get_models_for_provider
 from .settings import (
     EvoScientistConfig,
+    get_config_path,
     load_config,
     save_config,
-    get_config_path,
 )
-from ..llm import get_models_for_provider
 
 console = Console()
 
@@ -135,8 +135,8 @@ class IntegerValidator(Validator):
                 raise ValidationError(
                     message=f"Must be between {self.min_value} and {self.max_value}"
                 )
-        except ValueError:
-            raise ValidationError(message="Must be a valid integer")
+        except ValueError as e:
+            raise ValidationError(message="Must be a valid integer") from e
 
 
 class ChoiceValidator(Validator):
@@ -224,9 +224,9 @@ def validate_nvidia_key(api_key: str) -> tuple[bool, str]:
     try:
         from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
-        llm = ChatNVIDIA(api_key=api_key, model="meta/llama-3.1-8b-instruct")
-        llm.available_models
+        ChatNVIDIA(api_key=api_key, model="meta/llama-3.1-8b-instruct")
         return True, "Valid"
+
     except Exception as e:
         error_str = str(e).lower()
         if (
@@ -779,7 +779,7 @@ def _prompt_and_validate_api_key(
         valid, msg = validate_fn(key_to_validate)
         if valid:
             console.print(f"\r  [green]\u2713 {msg}[/green]      ")
-            return new_key if new_key else None
+            return new_key or None
         else:
             console.print(f"\r  [red]\u2717 {msg}[/red]      ")
             if not new_key:
@@ -795,7 +795,7 @@ def _prompt_and_validate_api_key(
                 raise KeyboardInterrupt()
             return new_key if save_anyway else None
 
-    return new_key if new_key else None
+    return new_key or None
 
 
 def _prompt_ccproxy_port(config: EvoScientistConfig) -> None:
@@ -822,7 +822,7 @@ def _prompt_ccproxy_port(config: EvoScientistConfig) -> None:
         ccproxy_port = current_port
         console.print(f"  [dim]Using default port: {ccproxy_port}[/dim]")
 
-    setattr(config, "ccproxy_port", ccproxy_port)
+    config.ccproxy_port = ccproxy_port
     console.print(
         f"  [green]✓ ccproxy will run on http://127.0.0.1:{ccproxy_port}[/green]"
     )
@@ -864,7 +864,7 @@ def _step_anthropic_auth_mode(config: EvoScientistConfig) -> str:
     Returns:
         Selected auth mode: "api_key", "oauth", or "auto".
     """
-    from ..ccproxy_manager import is_ccproxy_available, check_ccproxy_auth
+    from ..ccproxy_manager import check_ccproxy_auth, is_ccproxy_available
 
     ccproxy_available = is_ccproxy_available()
 
@@ -960,7 +960,7 @@ def _step_openai_auth_mode(config: EvoScientistConfig) -> str:
     Returns:
         Selected auth mode: "api_key" or "oauth".
     """
-    from ..ccproxy_manager import is_ccproxy_available, check_ccproxy_auth
+    from ..ccproxy_manager import check_ccproxy_auth, is_ccproxy_available
 
     ccproxy_available = is_ccproxy_available()
 
@@ -1085,7 +1085,7 @@ def _step_base_url(config: EvoScientistConfig, current_value: str | None = None)
     """
     current = current_value if current_value is not None else ""
     hint = f"Current: {current}" if current else ""
-    default = current if current else ""
+    default = current or ""
 
     url = questionary.text(
         f"Base URL{' (' + hint + ', Enter to keep)' if hint else ''}:",
@@ -1111,7 +1111,7 @@ def _step_ollama_base_url(config: EvoScientistConfig) -> tuple[str, list[str]]:
         Tuple of (base_url, detected_model_names).
     """
     current = config.ollama_base_url or os.environ.get("OLLAMA_BASE_URL", "")
-    default = current if current else "http://localhost:11434"
+    default = current or "http://localhost:11434"
 
     url = questionary.text(
         f"Ollama base URL (Enter for {default}):",
@@ -2018,7 +2018,7 @@ def _step_channels(config: EvoScientistConfig) -> dict[str, object]:
                     qmark=f"  {QMARK}",
                 ).ask()
                 if install_now is None:
-                    raise KeyboardInterrupt()
+                    raise KeyboardInterrupt() from None
                 if install_now:
                     console.print(f"  [dim]Installing {_pkg_display}...[/dim]")
                     if _pip_pkgs:

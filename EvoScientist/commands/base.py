@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Protocol, Type, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 
 @dataclass
@@ -10,7 +10,7 @@ class Argument:
     """Definition of a command argument."""
 
     name: str
-    type: Type
+    type: type
     description: str
     required: bool = True
 
@@ -61,9 +61,9 @@ class Command(ABC):
     """Base class for all EvoScientist slash commands."""
 
     name: str
-    alias: list[str] = []
+    alias: ClassVar[list[str]] = []
     description: str
-    arguments: list[Argument] = []
+    arguments: ClassVar[list[Argument]] = []
 
     @abstractmethod
     async def execute(self, ctx: CommandContext, args: list[str]) -> None:

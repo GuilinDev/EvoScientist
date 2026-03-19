@@ -12,7 +12,6 @@ import pytest
 
 from EvoScientist.llm import get_chat_model
 
-
 pytestmark = pytest.mark.skipif(
     not os.environ.get("MINIMAX_API_KEY"),
     reason="MINIMAX_API_KEY not set",

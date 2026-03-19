@@ -17,9 +17,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 import yaml
 
@@ -83,9 +83,7 @@ def install_pip_package(package: str) -> bool:
 
     for cmd in commands:
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=120
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if result.returncode == 0:
                 import importlib
 
@@ -117,8 +115,10 @@ def _clone_repo(repo: str, ref: str | None, dest: str) -> None:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=_CLONE_TIMEOUT
         )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"git clone timed out after {_CLONE_TIMEOUT}s for {repo}")
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"git clone timed out after {_CLONE_TIMEOUT}s for {repo}"
+        ) from e
     if result.returncode != 0:
         raise RuntimeError(f"git clone failed: {result.stderr.strip()}")
 
@@ -160,7 +160,9 @@ def _scan_mcp_dir(mcp_root: Path) -> list[MCPServerEntry]:
         try:
             entries.append(parse_marketplace_yaml(yaml_file))
         except Exception as exc:
-            logger.warning("Failed to parse marketplace MCP %s: %s", yaml_file.name, exc)
+            logger.warning(
+                "Failed to parse marketplace MCP %s: %s", yaml_file.name, exc
+            )
     return entries
 
 
@@ -242,9 +244,7 @@ def install_mcp_server(
     if entry.pip_package:
         print_fn(f"  Installing {entry.pip_package}...", "dim")
         if not install_pip_package(entry.pip_package):
-            print_fn(
-                f"  Failed: {pip_install_hint()} {entry.pip_package}", "red"
-            )
+            print_fn(f"  Failed: {pip_install_hint()} {entry.pip_package}", "red")
             return False
 
     # Add to mcp.yaml

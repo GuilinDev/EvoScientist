@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 from ..base import Argument, Command, CommandContext
 
 
@@ -8,7 +10,7 @@ class InstallMCPCommand(Command):
 
     name = "/install-mcp"
     description = "Browse and install MCP servers"
-    arguments = [
+    arguments: ClassVar[list[Argument]] = [
         Argument(
             name="source",
             type=str,
@@ -55,9 +57,7 @@ class InstallMCPCommand(Command):
                         f"{match.name} is already configured.", style="yellow"
                     )
                     return
-                if install_mcp_server(
-                    match, print_fn=ctx.ui.append_system
-                ):
+                if install_mcp_server(match, print_fn=ctx.ui.append_system):
                     ctx.ui.append_system(f"Configured: {match.name}", style="green")
                     ctx.ui.append_system("Reload with /new to apply.", style="dim")
                 else:
@@ -92,9 +92,7 @@ class InstallMCPCommand(Command):
             ctx.ui.append_system("No servers selected.", style="dim")
             return
 
-        count = install_mcp_servers(
-            selected_entries, print_fn=ctx.ui.append_system
-        )
+        count = install_mcp_servers(selected_entries, print_fn=ctx.ui.append_system)
         if count:
             ctx.ui.append_system(
                 f"{count} server(s) configured. Reload with /new to apply.",

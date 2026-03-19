@@ -8,13 +8,12 @@ with the following priority (highest to lowest):
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, asdict, fields
-from dotenv import find_dotenv, load_dotenv
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-
+from dotenv import find_dotenv, load_dotenv
 
 # =============================================================================
 # Configuration paths

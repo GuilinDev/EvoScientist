@@ -25,6 +25,7 @@ from langchain.chat_models import init_chat_model
 def _patch_anthropic_proxy_compat() -> None:
     try:
         import types as _types
+
         from langchain_anthropic.chat_models import ChatAnthropic as _CA
 
         _orig = _CA._make_message_chunk_from_anthropic_event
@@ -41,7 +42,9 @@ def _patch_anthropic_proxy_compat() -> None:
                     if isinstance(val, dict):
                         d = val.copy()
                         setattr(
-                            obj, attr, _types.SimpleNamespace(model_dump=lambda **kw: d)
+                            obj,
+                            attr,
+                            _types.SimpleNamespace(model_dump=lambda d=d, **kw: d),
                         )
             return _orig(self, event, *args, **kwargs)
 

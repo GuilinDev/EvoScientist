@@ -3,15 +3,14 @@
 from unittest.mock import patch
 
 from EvoScientist.llm import (
-    MODELS,
     DEFAULT_MODEL,
+    MODELS,
     get_chat_model,
+    get_model_info,
     get_models_for_provider,
     list_models,
-    get_model_info,
 )
 from EvoScientist.llm.models import _MODEL_ENTRIES
-
 
 # =============================================================================
 # Test MODELS registry
@@ -583,7 +582,7 @@ class TestMiniMaxProvider:
     def test_minimax_model_ids_correct(self):
         """MiniMax model IDs should match the official API model names."""
         minimax_models = get_models_for_provider("minimax")
-        model_dict = {name: mid for name, mid in minimax_models}
+        model_dict = dict(minimax_models)
         assert model_dict["minimax-m2.7"] == "MiniMax-M2.7"
         assert model_dict["minimax-m2.5"] == "MiniMax-M2.5"
         assert model_dict["minimax-m2.5-highspeed"] == "MiniMax-M2.5-highspeed"

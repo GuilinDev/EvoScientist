@@ -186,6 +186,7 @@ def _show_mcp_config(name: str = "", *, show_blank_line: bool = True) -> str:
 def _cmd_mcp_add(args_str: str) -> None:
     """Handle ``/mcp add ...``."""
     import shlex
+
     from ..mcp import parse_mcp_add_args
 
     if not args_str.strip():
@@ -230,6 +231,7 @@ def _cmd_mcp_add(args_str: str) -> None:
 def _cmd_mcp_edit(args_str: str) -> None:
     """Handle ``/mcp edit <name> --field value ...``."""
     import shlex
+
     from ..mcp import parse_mcp_edit_args
 
     if not args_str.strip():

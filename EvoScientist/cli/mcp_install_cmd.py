@@ -23,7 +23,6 @@ from ..mcp.registry import (
 )
 from ..stream.display import console
 
-
 _PICKER_STYLE = PtStyle.from_dict(
     {
         "questionmark": "#888888",
@@ -82,9 +81,7 @@ def _browse_and_select(
 
     if pre_filter_tag:
         pre_filter_tag = pre_filter_tag.lower()
-        filtered = [
-            e for e in servers if pre_filter_tag in [t.lower() for t in e.tags]
-        ]
+        filtered = [e for e in servers if pre_filter_tag in [t.lower() for t in e.tags]]
         if not filtered:
             console.print(
                 f"[yellow]No servers found with tag: {pre_filter_tag}[/yellow]"
